@@ -87,6 +87,8 @@ def main(cfg):
     simulation_app.context.new_stage()
 
     formation_env, formation_transform = get_env(name='Formation', config_path='Formation', headless=True)
+    cfg.algo.actor.hidden_units = [256, 256, 256]
+    cfg.algo.critic.hidden_units = [256, 256, 256]
     formation_policy = algos[cfg.algo.name.lower()](cfg.algo, agent_spec=formation_env.agent_spec["drone"],
                                                     device="cuda")
     formation_policy.load_state_dict(torch.load(formation_checkpoint))
