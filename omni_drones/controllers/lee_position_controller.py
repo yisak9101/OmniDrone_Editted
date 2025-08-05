@@ -391,4 +391,6 @@ class RateController(nn.Module):
 
         cmd = (cmd / self.max_thrusts) * 2 - 1
         cmd = cmd.reshape(*batch_shape, -1)
+
+
         return cmd

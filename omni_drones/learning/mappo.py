@@ -482,6 +482,8 @@ class Actor(nn.Module):
             action_log_probs = action_dist.log_prob(raw_action).unsqueeze(-1)
             action_log_probs -= self._squash_correction(raw_action).sum(-1, keepdim=True)
             dist_entropy = action_dist.entropy().unsqueeze(-1)
+            action[:, :-1] = 0
+            action[:, -1] = 100
             return action, action_log_probs, dist_entropy
 
 
