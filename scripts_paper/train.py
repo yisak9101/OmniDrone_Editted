@@ -160,7 +160,7 @@ def main(cfg):
     env.set_seed(cfg.seed)
 
     agent_spec: AgentSpec = env.agent_spec["drone"]
-    policy = algos[cfg.algo.name.lower()](cfg.algo, max_thrust, agent_spec=agent_spec, device="cuda")
+    policy = algos[cfg.algo.name.lower()](cfg.algo, agent_spec=agent_spec, device="cuda")
 
     # policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone/wandb/run-20250705_071839-86xt84op/files/checkpoint_final.pt"))
 
@@ -284,7 +284,7 @@ def main(cfg):
 
 
     wandb.finish()
-    
+
     simulation_app.close()
 
 

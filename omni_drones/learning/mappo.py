@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sympy.stats import entropy
 from tensordict import TensorDict
 from tensordict.utils import expand_right
 from tensordict.nn import make_functional, TensorDictModule, TensorDictParams
@@ -50,7 +51,7 @@ LR_SCHEDULER = lr_scheduler._LRScheduler
 
 class MAPPOPolicy(object):
     def __init__(
-        self, cfg, max_thrust, agent_spec: AgentSpec, device="cuda"
+        self, cfg, agent_spec: AgentSpec, device="cuda"
     ) -> None:
         super().__init__()
 
@@ -61,7 +62,6 @@ class MAPPOPolicy(object):
         print(self.agent_spec.observation_spec)
         print(self.agent_spec.action_spec)
 
-        self.max_thrust = max_thrust
         self.clip_param = cfg.clip_param
         self.ppo_epoch = int(cfg.ppo_epochs)
         self.num_minibatches = int(cfg.num_minibatches)
@@ -111,7 +111,6 @@ class MAPPOPolicy(object):
 
     def make_actor(self):
         cfg = self.cfg.actor
-        cfg['max_thrust'] = self.max_thrust
 
         self.actor_in_keys = [self.obs_name, self.act_name]
         self.actor_out_keys = [
@@ -233,7 +232,7 @@ class MAPPOPolicy(object):
             * advantages
         )
         policy_loss = - torch.mean(torch.min(surr1, surr2) * self.act_dim)
-        entropy_loss = - torch.mean(dist_entropy)
+        entropy_loss = torch.mean(dist_entropy)
 
         self.actor_opt.zero_grad()
         (policy_loss + entropy_loss * self.cfg.entropy_coef).backward()
@@ -474,23 +473,18 @@ class Actor(nn.Module):
             dist_entropy = action_dist.entropy().unsqueeze(-1)
             return action, action_log_probs, dist_entropy
         else:
-            # if 'bounded_action' in self.cfg and self.cfg['bounded_action']:
-            #     raw_action = action_dist.mode if deterministic else action_dist.sample()
-            #     rate, thrust = torch.tanh(raw_action).split([3,1], -1)  # ∈ (-1,1)
-            #     rate = rate * math.pi
-            #     thrust = 0.5 * (thrust + 1.0) * (self.cfg['max_thrust'])
-            #     action = torch.cat([rate, thrust], dim=-1)
-            #     action_log_probs = action_dist.log_prob(raw_action).unsqueeze(-1)
-            #     action_log_probs -= self._squash_correction(raw_action).sum(-1, keepdim=True)
-            #     dist_entropy = action_dist.entropy().unsqueeze(-1)
-            #     # action[:, :-1] = 0
-            #     # action[:, -1] = 100
-            #     return action, action_log_probs, dist_entropy
-            # else:
-            action = action_dist.mode if deterministic else action_dist.sample()
-            action_log_probs = action_dist.log_prob(action).unsqueeze(-1)
-            dist_entropy = action_dist.entropy().unsqueeze(-1)
-            return action, action_log_probs, dist_entropy
+            if 'bounded_action' in self.cfg and self.cfg['bounded_action']:
+                raw_action = action_dist.mode if deterministic else action_dist.sample()
+                action = torch.tanh(raw_action)  # ∈ (-1,1)
+                log_prob_raw_action = action_dist.log_prob(raw_action).unsqueeze(-1)
+                log_prob_action = log_prob_raw_action - torch.log(1 - torch.tanh(raw_action).pow(2.) + 1e-6).sum(-1, keepdim=True)
+                dist_entropy = action_dist.entropy().unsqueeze(-1)
+                return action, log_prob_action, dist_entropy
+            else:
+                action = action_dist.mode if deterministic else action_dist.sample()
+                action_log_probs = action_dist.log_prob(action).unsqueeze(-1)
+                dist_entropy = action_dist.entropy().unsqueeze(-1)
+                return action, action_log_probs, dist_entropy
 
 
 class Critic(nn.Module):

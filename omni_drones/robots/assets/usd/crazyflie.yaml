@@ -43,6 +43,6 @@ rotor_configuration:
   - 3.92699082
   - 5.49778714
 angular_rate_max: # [rad/s]
+  - 4
+  - 4
   - 2
-  - 2
-  - 1

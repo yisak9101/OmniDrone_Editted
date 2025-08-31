@@ -398,8 +398,7 @@ class RateController(nn.Module):
         pos, rot, linvel, angvel = root_state.split([3, 4, 3, 3], dim=1)
         body_rate = quat_rotate_inverse(rot, angvel)
 
-        rate_error = target_rate - body_rate
-        rate_error *= self.gain_angular_rate
+        rate_error = (target_rate - body_rate) * self.gain_angular_rate
         target_torques = torch.matmul(rate_error, self.I.T) + torch.cross(
             body_rate, torch.matmul(body_rate, self.I.T), dim=1
         )
