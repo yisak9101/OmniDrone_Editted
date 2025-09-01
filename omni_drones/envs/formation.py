@@ -219,20 +219,26 @@ class Formation(IsaacEnv):
         self.drone.initialize()
         self.init_poses = self.drone.get_world_poses(clone=True)
 
+        # initial state distribution
+        self.cells = (
+            make_cells([-25, -25, 0.25], [25, 25, 3], [5.0, 5.0, 0.25])
+            .flatten(0, -2)
+            .to(self.device)
+        )
+
         self.middle_pos_dist = D.Uniform(
-            torch.tensor([0., 0., 2.], device=self.device),
-            torch.tensor([0., 0., 2.], device=self.device)
+            torch.tensor([-5, -5, 1.0], device=self.device),
+            torch.tensor([5, 5, 2.5], device=self.device)
         )
         self.spead_pos_dist = D.Uniform(
-            torch.tensor([-2., -2., -0.5], device=self.device),
-            torch.tensor([2., 2., 0.5], device=self.device)
+            torch.tensor([-7.5, -7.5, -0.5], device=self.device),
+            torch.tensor([7.5, 7.5, 0.5], device=self.device)
         )
-        self.spead_pos = torch.tensor(FORMATION_CA1, device=self.device).unsqueeze(0)
 
         # to default
         self.init_rpy_dist = D.Uniform(
-            torch.tensor([0, 0, 0.], device=self.device) * torch.pi,
-            torch.tensor([0, 0, 0.], device=self.device) * torch.pi
+            torch.tensor([-.2, -.2, 0.], device=self.device) * torch.pi,
+            torch.tensor([0.2, 0.2, 2.], device=self.device) * torch.pi
         )
         self.target_pos = self.target_pos.expand(self.num_envs, 1, 3)
         self.target_heading = torch.zeros(self.num_envs, 3, device=self.device)
@@ -368,22 +374,22 @@ class Formation(IsaacEnv):
         #     "/World/envs/env_0/goal4",
         #     disable_gravity=True
         # )
-        # DynamicSphere(
-        # "/World/envs/env_0/goal",
-        # translation=torch.tensor([0., 0., 1.5]),
-        # color=torch.tensor([1.0, 0.2, 0.2]),
-        # radius=0.3,
-        # mass=0.1,
-        # )
-        # kit_utils.set_collision_properties(
-        #     "/World/envs/env_0/goal",
-        #     collision_enabled=True
-        # )
-        # kit_utils.set_rigid_body_properties(
-        #     "/World/envs/env_0/goal",
-        #     disable_gravity=True
-        # )
-        # return ["/World/defaultGroundPlane"]
+        DynamicSphere(
+        "/World/envs/env_0/goal",
+        translation=torch.tensor([0., 0., 1.5]),
+        color=torch.tensor([1.0, 0.2, 0.2]),
+        radius=0.3,
+        mass=0.1,
+        )
+        kit_utils.set_collision_properties(
+            "/World/envs/env_0/goal",
+            collision_enabled=True
+        )
+        kit_utils.set_rigid_body_properties(
+            "/World/envs/env_0/goal",
+            disable_gravity=True
+        )
+        return ["/World/defaultGroundPlane"]
 
     def _set_specs(self):
         drone_state_dim = self.drone.state_spec.shape[0]
@@ -421,6 +427,9 @@ class Formation(IsaacEnv):
             "terminated": DiscreteTensorSpec(2, (1,), dtype=torch.bool),
             "truncated": DiscreteTensorSpec(2, (1,), dtype=torch.bool),
         }).expand(self.num_envs).to(self.device)
+        info_spec = CompositeSpec({
+            "drone_state":UnboundedContinuousTensorSpec((self.drone.n, 13))
+        }).expand(self.num_envs).to(self.device)
         self.agent_spec["drone"] = AgentSpec(
             "drone",
             self.drone.n,
@@ -438,6 +447,8 @@ class Formation(IsaacEnv):
             "pos_error": UnboundedContinuousTensorSpec(1)
         }).expand(self.num_envs).to(self.device)
         self.observation_spec["stats"] = stats_spec
+        self.observation_spec["info"] = info_spec
+        self.info = info_spec.zero()
         self.stats = stats_spec.zero()
 
     def _reset_idx(self, env_ids: torch.Tensor):
@@ -457,7 +468,7 @@ class Formation(IsaacEnv):
         if (self.formation[:,:,2] > 2).any():
             print("hi")
         middle_point = self.middle_pos_dist.sample(env_ids.shape)
-        pos = middle_point.repeat(4,1,1).transpose(0,1) + self.spead_pos + self.envs_positions[env_ids].unsqueeze(1)
+        pos = middle_point.repeat(4,1,1).transpose(0,1) + self.spead_pos_dist.sample(torch.tensor([env_ids.shape[0]*4])).reshape(env_ids.shape[0],4,3) + self.envs_positions[env_ids].unsqueeze(1)
         # pos = torch.vmap(sample_from_grid, randomness="different")(
         #     self.cells.expand(len(env_ids), *self.cells.shape), n=self.drone.n
         # ) + self.envs_positions[env_ids].unsqueeze(1)
@@ -494,6 +505,7 @@ class Formation(IsaacEnv):
         self.root_states = self.drone.get_state()
         pos = self.drone.pos
         self.root_states[..., :3] = self.target_pos - pos
+        self.info["drone_state"][:] = self.root_states[..., :13]
 
         obs_self = [self.root_states]
         if self.time_encoding:
@@ -524,6 +536,7 @@ class Formation(IsaacEnv):
                 "observation": obs, 
                 "observation_central": state,
             },
+            "info": self.info,
             "stats": self.stats
         }, self.batch_size)
 

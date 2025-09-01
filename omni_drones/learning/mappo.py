@@ -449,6 +449,14 @@ class Actor(nn.Module):
         self.cfg = cfg
         self.encoder = encoder
         self.act_dist = act_dist
+        self.t = 0
+        self.thr1 = 0.2
+        self.thr2 = 0.2
+        self.roll_m = 0.5
+        self.roll_p = -0.5
+        self.mid1 = 60
+        self.mid2 = 100
+        self.mid3 = 200
 
     def _squash_correction(self, raw_action):
         """
@@ -487,6 +495,26 @@ class Actor(nn.Module):
                 action[:] = 0
                 action[...,0] = 0.5
                 return action, action_log_probs, dist_entropy
+            # action = action_dist.mode if deterministic else action_dist.sample()
+            # action_log_probs = action_dist.log_prob(action).unsqueeze(-1)
+            # dist_entropy = action_dist.entropy().unsqueeze(-1)
+            # action[:] = 0
+            # action[..., 0] = self.roll_p
+            # action[..., -1] = self.thr1
+            # if self.t <= self.mid1:
+            #     action[..., 0] = self.roll_m
+            #     action[..., -1] = self.thr1
+            # elif self.mid1 < self.t <= self.mid2:
+            #     action[..., 0] = 0
+            #     action[..., -1] = self.thr1
+            # elif self.mid2 < self.t <= self.mid3:
+            #     action[..., 0] = self.roll_p
+            #     action[..., -1] = self.thr2
+            # else:
+            #     action[..., 0] = 0
+            #     action[..., -1] = self.thr2
+            # self.t += 1
+            # return action, action_log_probs, dist_entropy
 
 
 class Critic(nn.Module):

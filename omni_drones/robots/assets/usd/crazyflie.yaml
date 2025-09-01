@@ -27,6 +27,10 @@ rotor_configuration:
   - 1.7965e-08
   - 1.7965e-08
   max_rotation_velocities: # [rad/s]
+#  - 3600
+#  - 3600
+#  - 3600
+#  - 3600
   - 3050
   - 3050
   - 3050

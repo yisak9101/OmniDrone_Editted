@@ -201,7 +201,7 @@ def main(cfg):
         trajs = env.rollout(
             max_steps=base_env.max_episode_length,
             policy=lambda td: policy(td, deterministic=True),
-            callback=Every(record_frame, 2),
+            callback=Every(record_frame, 1),
             auto_reset=True,
             break_when_any_done=False,
             return_contiguous=False

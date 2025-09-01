@@ -13,8 +13,17 @@ seed: 1
 
 viewer:
   resolution: [960, 720]
-  eye: [2.3, -0.2, 2.7]
-  lookat: [0., 0., 3.]
+#  eye: [2.3, -0.2, 2.7]
+#  lookat: [0., 0., 3.]
+#  eye: [15., 0., 1.]
+#  lookat: [0., 0., 1.]
+#  eye: [0., 0., 10.]
+#  lookat: [0., 0., -1.]
+#  eye: [6., 0., 1.]
+#  eye: [-7., -1.5, 2]
+#  lookat: [0., 0., 1.5]
+  eye: [23., -10., 10.]
+  lookat: [0., 0., 1.]
 
 wandb:
   group: ${oc.select:..task.name}
@@ -22,7 +31,7 @@ wandb:
   job_type: train
   entity: mlic_academic
   project: OmniDroneTest
-  mode: disabled # set to 'disabled' when debugging locally #online
+  mode: online # set to 'disabled' when debugging locally #online
   run_id: 
   monitor_gym: true
   tags: 
