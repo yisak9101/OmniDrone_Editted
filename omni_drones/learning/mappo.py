@@ -484,6 +484,8 @@ class Actor(nn.Module):
                 action = action_dist.mode if deterministic else action_dist.sample()
                 action_log_probs = action_dist.log_prob(action).unsqueeze(-1)
                 dist_entropy = action_dist.entropy().unsqueeze(-1)
+                action[:] = 0
+                action[...,0] = 0.5
                 return action, action_log_probs, dist_entropy
 
 

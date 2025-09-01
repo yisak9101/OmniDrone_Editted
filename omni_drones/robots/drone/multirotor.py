@@ -280,6 +280,7 @@ class MultirotorBase(RobotBase):
                 kz=0.3
             ).sum(-2)
         self.forces[:] += (self.drag_coef * self.masses) * self.vel[..., :3]
+        # self.forces[...,-1] += 0.344
 
         self.rotors_view.apply_forces_and_torques_at_pos(
             self.thrusts.reshape(-1, 3), 

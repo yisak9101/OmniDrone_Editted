@@ -132,12 +132,12 @@ FORMATION_D1_S = [ #직육면체, 정육면체 6개를 이어붙인 구조. 좀 
     [-0.2, -0.4, 0.1]
 ]
 ### Belows are old formations for cardbox. Please remain this formations. 
-# FORMATION_CA1 = [ #직육면체 
-#     [0.45, 0.4, 0.75],
-#     [0.45, -0.4, 0.75],
-#     [-0.45, 0.4, 0.75],
-#     [-0.45, -0.4, 0.75]
-# ]
+FORMATION_CA1 = [ #직육면체
+    [0.45, 0.4, 0.75],
+    [0.45, -0.4, 0.75],
+    [-0.45, 0.4, 0.75],
+    [-0.45, -0.4, 0.75]
+]
 
 # FORMATION_CA2 = [ #직육면체 
 #     [0.4, 0.35, 0.6],
@@ -219,26 +219,20 @@ class Formation(IsaacEnv):
         self.drone.initialize()
         self.init_poses = self.drone.get_world_poses(clone=True)
 
-        # initial state distribution
-        self.cells = (
-            make_cells([-25, -25, 0.25], [25, 25, 3], [5.0, 5.0, 0.25])
-            .flatten(0, -2)
-            .to(self.device)
-        )
-
         self.middle_pos_dist = D.Uniform(
-            torch.tensor([-30, -30, 1.0], device=self.device),
-            torch.tensor([30, 30, 2.5], device=self.device)
+            torch.tensor([0., 0., 2.], device=self.device),
+            torch.tensor([0., 0., 2.], device=self.device)
         )
         self.spead_pos_dist = D.Uniform(
-            torch.tensor([-7.5, -7.5, -0.5], device=self.device),
-            torch.tensor([7.5, 7.5, 0.5], device=self.device)
+            torch.tensor([-2., -2., -0.5], device=self.device),
+            torch.tensor([2., 2., 0.5], device=self.device)
         )
+        self.spead_pos = torch.tensor(FORMATION_CA1, device=self.device).unsqueeze(0)
 
         # to default
         self.init_rpy_dist = D.Uniform(
-            torch.tensor([-.2, -.2, 0.], device=self.device) * torch.pi,
-            torch.tensor([0.2, 0.2, 2.], device=self.device) * torch.pi
+            torch.tensor([0, 0, 0.], device=self.device) * torch.pi,
+            torch.tensor([0, 0, 0.], device=self.device) * torch.pi
         )
         self.target_pos = self.target_pos.expand(self.num_envs, 1, 3)
         self.target_heading = torch.zeros(self.num_envs, 3, device=self.device)
@@ -374,22 +368,22 @@ class Formation(IsaacEnv):
         #     "/World/envs/env_0/goal4",
         #     disable_gravity=True
         # )
-        DynamicSphere(
-        "/World/envs/env_0/goal",
-        translation=torch.tensor([0., 0., 1.5]),
-        color=torch.tensor([1.0, 0.2, 0.2]),
-        radius=0.3,
-        mass=0.1,
-        )
-        kit_utils.set_collision_properties(
-            "/World/envs/env_0/goal",
-            collision_enabled=True
-        )
-        kit_utils.set_rigid_body_properties(
-            "/World/envs/env_0/goal",
-            disable_gravity=True
-        )
-        return ["/World/defaultGroundPlane"]
+        # DynamicSphere(
+        # "/World/envs/env_0/goal",
+        # translation=torch.tensor([0., 0., 1.5]),
+        # color=torch.tensor([1.0, 0.2, 0.2]),
+        # radius=0.3,
+        # mass=0.1,
+        # )
+        # kit_utils.set_collision_properties(
+        #     "/World/envs/env_0/goal",
+        #     collision_enabled=True
+        # )
+        # kit_utils.set_rigid_body_properties(
+        #     "/World/envs/env_0/goal",
+        #     disable_gravity=True
+        # )
+        # return ["/World/defaultGroundPlane"]
 
     def _set_specs(self):
         drone_state_dim = self.drone.state_spec.shape[0]
@@ -463,7 +457,7 @@ class Formation(IsaacEnv):
         if (self.formation[:,:,2] > 2).any():
             print("hi")
         middle_point = self.middle_pos_dist.sample(env_ids.shape)
-        pos = middle_point.repeat(4,1,1).transpose(0,1) + self.spead_pos_dist.sample(torch.tensor([env_ids.shape[0]*4])).reshape(env_ids.shape[0],4,3) + self.envs_positions[env_ids].unsqueeze(1)
+        pos = middle_point.repeat(4,1,1).transpose(0,1) + self.spead_pos + self.envs_positions[env_ids].unsqueeze(1)
         # pos = torch.vmap(sample_from_grid, randomness="different")(
         #     self.cells.expand(len(env_ids), *self.cells.shape), n=self.drone.n
         # ) + self.envs_positions[env_ids].unsqueeze(1)
