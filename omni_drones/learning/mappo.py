@@ -481,40 +481,10 @@ class Actor(nn.Module):
             dist_entropy = action_dist.entropy().unsqueeze(-1)
             return action, action_log_probs, dist_entropy
         else:
-            if 'bounded_action' in self.cfg and self.cfg['bounded_action']:
-                raw_action = action_dist.mode if deterministic else action_dist.sample()
-                action = torch.tanh(raw_action)  # ∈ (-1,1)
-                log_prob_raw_action = action_dist.log_prob(raw_action).unsqueeze(-1)
-                log_prob_action = log_prob_raw_action - torch.log(1 - torch.tanh(raw_action).pow(2.) + 1e-6).sum(-1, keepdim=True)
-                dist_entropy = action_dist.entropy().unsqueeze(-1)
-                return action, log_prob_action, dist_entropy
-            else:
-                action = action_dist.mode if deterministic else action_dist.sample()
-                action_log_probs = action_dist.log_prob(action).unsqueeze(-1)
-                dist_entropy = action_dist.entropy().unsqueeze(-1)
-                action[:] = 0
-                action[...,0] = 0.5
-                return action, action_log_probs, dist_entropy
-            # action = action_dist.mode if deterministic else action_dist.sample()
-            # action_log_probs = action_dist.log_prob(action).unsqueeze(-1)
-            # dist_entropy = action_dist.entropy().unsqueeze(-1)
-            # action[:] = 0
-            # action[..., 0] = self.roll_p
-            # action[..., -1] = self.thr1
-            # if self.t <= self.mid1:
-            #     action[..., 0] = self.roll_m
-            #     action[..., -1] = self.thr1
-            # elif self.mid1 < self.t <= self.mid2:
-            #     action[..., 0] = 0
-            #     action[..., -1] = self.thr1
-            # elif self.mid2 < self.t <= self.mid3:
-            #     action[..., 0] = self.roll_p
-            #     action[..., -1] = self.thr2
-            # else:
-            #     action[..., 0] = 0
-            #     action[..., -1] = self.thr2
-            # self.t += 1
-            # return action, action_log_probs, dist_entropy
+            action = action_dist.mode if deterministic else action_dist.sample()
+            action_log_probs = action_dist.log_prob(action).unsqueeze(-1)
+            dist_entropy = action_dist.entropy().unsqueeze(-1)
+            return action, action_log_probs, dist_entropy
 
 
 class Critic(nn.Module):
