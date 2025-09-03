@@ -93,13 +93,13 @@ class TransportHover(IsaacEnv):
 
         self.group.initialize()
         self.payload = self.group.payload_view
-        
-        # self.payload_target_visual = RigidPrimView(
-        #     "/World/envs/.*/payloadTargetVis",
-        #     reset_xform_properties=False
-        # )
-        # self.payload_target_visual.initialize()
-        
+
+        self.payload_target_visual = RigidPrimView(
+            "/World/envs/.*/payloadTargetVis",
+            reset_xform_properties=False
+        )
+        self.payload_target_visual.initialize()
+
         self.init_poses = self.group.get_world_poses(clone=True)
         self.init_velocities = torch.zeros_like(self.group.get_velocities())
         self.init_joint_pos = self.group.get_joint_positions(clone=True)
@@ -109,7 +109,7 @@ class TransportHover(IsaacEnv):
         self.init_drone_vels = torch.zeros_like(self.drone.get_velocities())
 
         self.payload_target_rpy_dist = D.Uniform(
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi,
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
             torch.tensor([0., 0., 2.], device=self.device) * torch.pi
         )
         payload_mass_scale = self.cfg.task.payload_mass_scale
@@ -118,15 +118,15 @@ class TransportHover(IsaacEnv):
             torch.as_tensor(payload_mass_scale[1] * self.drone.MASS_0.sum(), device=self.device)
         )
         self.init_pos_dist = D.Uniform(
-            torch.tensor([0., 0., 2.5], device=self.device),
-            torch.tensor([0., 0., 2.5], device=self.device)
+            torch.tensor([-5, -5, 1.], device=self.device),
+            torch.tensor([5., 5., 2.5], device=self.device)
         )
         self.init_rpy_dist = D.Uniform(
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi,
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
             torch.tensor([0., 0., 2.], device=self.device) * torch.pi
         )
         self.height_dist = D.Uniform(
-            torch.tensor([0., 0., 2.5], device=self.device),
+            torch.tensor([0., 0., 1.], device=self.device),
             torch.tensor([0., 0., 2.5], device=self.device)
         )
         # self.payload_target_pos = torch.zeros((self.num_envs, 3), device=self.device)
@@ -150,24 +150,24 @@ class TransportHover(IsaacEnv):
 
         scene_utils.design_scene()
 
-        # DynamicCuboid(
-        #     "/World/envs/env_0/payloadTargetVis",
-        #     translation=torch.tensor([0., 0., 1.]),
-        #     # scale=torch.tensor([0.75, 0.5, 0.2]),
-        #     # scale=torch.tensor([0.6, 0.9, 0.3]),  # D1
-        #     # scale=torch.tensor([0.4, 0.4, 0.3]),  # A1
-        #     scale=torch.tensor([0.5, 0.25, 0.2]),
-        #     color=torch.tensor([0.8, 0.1, 0.1]),
-        #     size=2.01,
-        # )
-        # kit_utils.set_collision_properties(
-        #     "/World/envs/env_0/payloadTargetVis",
-        #     collision_enabled=False
-        # )
-        # kit_utils.set_rigid_body_properties(
-        #     "/World/envs/env_0/payloadTargetVis",
-        #     disable_gravity=True
-        # )
+        DynamicCuboid(
+            "/World/envs/env_0/payloadTargetVis",
+            translation=torch.tensor([0., 0., 1.]),
+            # scale=torch.tensor([0.75, 0.5, 0.2]),
+            # scale=torch.tensor([0.6, 0.9, 0.3]),  # D1
+            # scale=torch.tensor([0.4, 0.4, 0.3]),  # A1
+            scale=torch.tensor([0.5, 0.25, 0.2]),
+            color=torch.tensor([0.8, 0.1, 0.1]),
+            size=2.01,
+        )
+        kit_utils.set_collision_properties(
+            "/World/envs/env_0/payloadTargetVis",
+            collision_enabled=False
+        )
+        kit_utils.set_rigid_body_properties(
+            "/World/envs/env_0/payloadTargetVis",
+            disable_gravity=True
+        )
 
         self.group.spawn(translations=[(0, 0, 1.)], enable_collision=False)
         return ["/World/defaultGroundPlane"]
@@ -255,10 +255,10 @@ class TransportHover(IsaacEnv):
         self.payload_target_heading[env_ids] = payload_target_heading
 
         self.payload.set_masses(payload_masses, env_ids)
-        # self.payload_target_visual.set_world_poses(
-        #     orientations=payload_target_rot,
-        #     env_indices=env_ids
-        # )
+        self.payload_target_visual.set_world_poses(
+            orientations=payload_target_rot,
+            env_indices=env_ids
+        )
 
         self.info["payload_mass"][env_ids] = payload_masses.unsqueeze(-1).clone()
         self.stats[env_ids] = 0.
@@ -396,24 +396,13 @@ class TransportHover(IsaacEnv):
         reward_action_smoothness = self.reward_action_smoothness_weight * -self.drone.throttle_difference
 
         reward[:] = (
-                reward_separation * (
-                # 1 * reward_pose
-                # + reward_pose * (reward_up + reward_spin + reward_swing)
-
-                # 2024.10.29 ì´ ë¦¬ì›Œë“œ ìž˜ ë¨.  --> trial0ìœ¼ë¡œ í‘œê¸°í•¨.
-                # 5 * pos_distance_ratio
-                # + 3 * heading_distance_ratio
-                # + 1 * (reward_up + reward_spin + reward_swing)
-
-                3 * goal_reward * heading_goal_reward
-                + 5 * pos_distance_ratio
-                + 3 * heading_distance_ratio
-                + 1.5 * (pos_distance_ratio + heading_distance_ratio) * (reward_up + reward_spin + reward_swing)
-
-                + reward_joint_limit
-                + reward_action_smoothness.mean(1, True)
-                + reward_effort
-        )
+                    reward_separation * (
+                    reward_pose
+                    + reward_pose * (reward_up + reward_spin + reward_swing)
+                    + reward_joint_limit
+                    + reward_action_smoothness.mean(1, True)
+                    + reward_effort
+            )
         ).unsqueeze(-1)
 
         done_hasnan = torch.isnan(self.drone_states).any(-1)
