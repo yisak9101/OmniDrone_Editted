@@ -3,6 +3,7 @@ import os
 import time
 
 import hydra
+import pandas as pd
 import torch
 import numpy as np
 import wandb
@@ -10,7 +11,7 @@ from omegaconf import OmegaConf
 import imageio
 
 from omni_drones import CONFIG_PATH, init_simulation_app
-from omni_drones.utils.torchrl import SyncDataCollector, AgentSpec
+from omni_drones.utils.torchrl import SyncDataCollector, AgentSpec, RenderCallback
 from omni_drones.utils.torchrl.transforms import (
     FromMultiDiscreteAction, 
     FromDiscreteAction,
@@ -162,7 +163,7 @@ def main(cfg):
     agent_spec: AgentSpec = env.agent_spec["drone"]
     policy = algos[cfg.algo.name.lower()](cfg.algo, agent_spec=agent_spec, device="cuda")
 
-    # policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone/wandb/run-20250705_071839-86xt84op/files/checkpoint_final.pt"))
+    # policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone/scripts_paper/formation_ratecontroller.pt"))
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -188,11 +189,7 @@ def main(cfg):
     def evaluate(
         seed: int = 0,
     ):
-        frames = []
-
-        def record_frame(*args, **kwargs):
-            frame = env.base_env.render(mode="rgb_array")
-            frames.append(frame)
+        render_callback = RenderCallback(interval=1)
 
         base_env.enable_render(True)
         env.eval()
@@ -201,7 +198,7 @@ def main(cfg):
         trajs = env.rollout(
             max_steps=base_env.max_episode_length,
             policy=lambda td: policy(td, deterministic=True),
-            callback=Every(record_frame, 1),
+            callback=render_callback,
             auto_reset=True,
             break_when_any_done=False,
             return_contiguous=False
@@ -226,11 +223,44 @@ def main(cfg):
             for k, v in traj_stats.items()
         }
 
-        if len(frames):
-            imageio.mimsave("video.mp4", frames, fps=0.5 / cfg.sim.dt)
+        # arr = trajs['agents']['action'].detach().cpu().numpy().squeeze()
+        # T, A, F = arr.shape
+        # timesteps = np.arange(1, T + 1)[:, None].repeat(A, axis=1)
+        # agents = np.arange(A)[None, :].repeat(T, axis=0)
+        # timesteps = timesteps.reshape(-1)
+        # agents = agents.reshape(-1)
+        # values = arr.reshape(-1, F)
+        # df = pd.DataFrame(
+        #     np.column_stack([timesteps, agents, values]),
+        #     columns=["timestep", "agent", "roll_rate", "pitch_rate", "yaw_rate", "thrust"]
+        # )
+        # df.to_csv("/home/mlic/Repo/OmniDrone/formation_ratecontroller.csv", index=False)
+        #
+        # done_arr = trajs['done'].detach().cpu().numpy().squeeze()
+        # N = done_arr.shape[0]
+        # timestep = np.arange(1, N + 1)[:, None]
+        # done_arr = done_arr[:, None]
+        # out = np.hstack([timestep, done_arr])
+        # np.savetxt(
+        #     "/home/mlic/Repo/OmniDrone/formation_ratecontroller_done.csv",
+        #     out,
+        #     delimiter=",",
+        #     header="timestep,done",
+        #     comments="",
+        #     fmt="%.6f"
+        # )
 
-        frames.clear()
+        # log video
+        frames = render_callback.get_video_array(axes="t c h w")
+        info["recording"] = wandb.Video(
+            frames,
+            fps=0.5 / (cfg.sim.dt * cfg.sim.substeps),
+            format="mp4"
+        )
+        frames = np.moveaxis(frames, 1, -1)
+        imageio.mimsave("/home/mlic/Repo/OmniDrone/video.mp4", frames, fps=0.5 / cfg.sim.dt)
         return info
+    # evaluate()
 
     pbar = tqdm(collector)
     env.train()

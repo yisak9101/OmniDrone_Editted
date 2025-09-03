@@ -7,8 +7,8 @@ env: ${task.env}
 
 total_frames: 600_000_000
 max_iters: -1
-eval_interval: 1000
-save_interval: 1000
+eval_interval: 300
+save_interval: 300
 seed: 1
 
 viewer:
@@ -20,10 +20,10 @@ viewer:
 #  eye: [0., 0., 10.]
 #  lookat: [0., 0., -1.]
 #  eye: [6., 0., 1.]
-#  eye: [-7., -1.5, 2]
-#  lookat: [0., 0., 1.5]
-  eye: [23., -10., 10.]
-  lookat: [0., 0., 1.]
+  eye: [2, -2, 1.75]
+  lookat: [0., 0., 1.5]
+#  eye: [23., -10., 10.]
+#  lookat: [0., 0., 1.]
 
 wandb:
   group: ${oc.select:..task.name}
@@ -31,7 +31,7 @@ wandb:
   job_type: train
   entity: mlic_academic
   project: OmniDroneTest
-  mode: online # set to 'disabled' when debugging locally #online
+  mode: online   # set to 'disabled' when debugging locally #online
   run_id: 
   monitor_gym: true
   tags: 

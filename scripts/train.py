@@ -3,6 +3,7 @@ import os
 import time
 
 import hydra
+import imageio
 import torch
 import numpy as np
 import pandas as pd
@@ -109,6 +110,8 @@ def main(cfg):
     except KeyError:
         raise NotImplementedError(f"Unknown algorithm: {cfg.algo.name}")
 
+    # policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone/hover_ratecontroller.pt"))
+
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
     max_iters = cfg.get("max_iters", -1)
@@ -171,12 +174,28 @@ def main(cfg):
             for k, v in traj_stats.items()
         }
 
+        # arr = trajs['agents']['action'].detach().cpu().numpy().squeeze()
+        # N = arr.shape[0]
+        # timestep = np.arange(1, N + 1)[:, None]
+        # out = np.hstack([timestep, arr])
+        # np.savetxt(
+        #     "/home/mlic/Repo/OmniDrone/hover_ratecontroller.csv",
+        #     out,
+        #     delimiter=",",
+        #     header="timestep,roll_rate,pitch_rate,yaw_rate,thrust",
+        #     comments="",
+        #     fmt="%.6f"
+        # )
+
         # log video
+        frames = render_callback.get_video_array(axes="t c h w")
         info["recording"] = wandb.Video(
-            render_callback.get_video_array(axes="t c h w"), 
+            frames,
             fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
             format="mp4"
         )
+        frames = np.moveaxis(frames, 1, -1)
+        imageio.mimsave("/home/mlic/Repo/OmniDrone/video.mp4", frames, fps=0.5 / cfg.sim.dt)
         
         # log distributions
         # df = pd.DataFrame(traj_stats)
@@ -185,6 +204,8 @@ def main(cfg):
         # info["eval/episode_len"] = wandb.plot.histogram(table, "episode_len")
 
         return info
+
+    # evaluate()
 
     pbar = tqdm(collector)
     env.train()
