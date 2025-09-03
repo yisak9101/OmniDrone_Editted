@@ -208,10 +208,15 @@ class Hover(IsaacEnv):
             self.time_encoding_dim = 4
             observation_dim += self.time_encoding_dim
 
+        observation_central_spec = CompositeSpec({
+            "drones": UnboundedContinuousTensorSpec((self.drone.n, drone_state_dim)),
+        }).to(self.device)
+
         self.observation_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "observation": UnboundedContinuousTensorSpec((1, observation_dim), device=self.device),
-                "intrinsics": self.drone.intrinsics_spec.unsqueeze(0).to(self.device)
+                "observation_central": observation_central_spec,
+                # "intrinsics": self.drone.intrinsics_spec.unsqueeze(0).to(self.device)
             })
         }).expand(self.num_envs).to(self.device)
         self.action_spec = CompositeSpec({
@@ -235,7 +240,8 @@ class Hover(IsaacEnv):
             observation_key=("agents", "observation"),
             action_key=("agents", "action"),
             reward_key=("agents", "reward"),
-            state_key=("agents", "intrinsics")
+            state_key=("agents", "observation_central")
+            # state_key = ("agents", "intrinsics")
         )
 
         stats_spec = CompositeSpec({
@@ -307,10 +313,13 @@ class Hover(IsaacEnv):
             obs.append(t.expand(-1, self.time_encoding_dim).unsqueeze(1))
         obs = torch.cat(obs, dim=-1)
 
+        state = TensorDict({"drones": self.root_state}, self.batch_size)
+
         return TensorDict({
             "agents": {
                 "observation": obs,
-                "intrinsics": self.drone.intrinsics
+                "observation_central": state,
+                # "intrinsics": self.drone.intrinsics
             },
             "stats": self.stats.clone(),
             "info": self.info
