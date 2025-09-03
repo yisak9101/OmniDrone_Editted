@@ -109,7 +109,7 @@ class TransportHover(IsaacEnv):
         self.init_drone_vels = torch.zeros_like(self.drone.get_velocities())
 
         self.payload_target_rpy_dist = D.Uniform(
-            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
+            torch.tensor([0., 0., 2.], device=self.device) * torch.pi,
             torch.tensor([0., 0., 2.], device=self.device) * torch.pi
         )
         payload_mass_scale = self.cfg.task.payload_mass_scale
@@ -118,15 +118,15 @@ class TransportHover(IsaacEnv):
             torch.as_tensor(payload_mass_scale[1] * self.drone.MASS_0.sum(), device=self.device)
         )
         self.init_pos_dist = D.Uniform(
-            torch.tensor([-5, -5, 1.], device=self.device),
+            torch.tensor([5., 5., 2.5], device=self.device),
             torch.tensor([5., 5., 2.5], device=self.device)
         )
         self.init_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi
         )
         self.height_dist = D.Uniform(
-            torch.tensor([0., 0., 1.], device=self.device),
+            torch.tensor([0., 0., 2.5], device=self.device),
             torch.tensor([0., 0., 2.5], device=self.device)
         )
         # self.payload_target_pos = torch.zeros((self.num_envs, 3), device=self.device)
@@ -195,6 +195,11 @@ class TransportHover(IsaacEnv):
                 "observation_central": state_spec,
             }
         }).expand(self.num_envs).to(self.device)
+        self.state_spec = CompositeSpec({
+            "agents": {
+                "state": UnboundedContinuousTensorSpec((self.drone.n, drone_state_dim)).to(self.device),
+            }
+        }).expand(self.num_envs).to(self.device)
         self.action_spec = CompositeSpec({
             "agents": {
                 "action": torch.stack([self.drone.action_spec] * self.drone.n, dim=0),
@@ -213,7 +218,7 @@ class TransportHover(IsaacEnv):
             observation_key=("agents", "observation"),
             action_key=("agents", "action"),
             reward_key=("agents", "reward"),
-            state_key=("agents", "state")
+            state_key=("agents", "state"),
         )
 
         info_spec = CompositeSpec({

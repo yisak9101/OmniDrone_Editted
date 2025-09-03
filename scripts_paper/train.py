@@ -163,7 +163,7 @@ def main(cfg):
     agent_spec: AgentSpec = env.agent_spec["drone"]
     policy = algos[cfg.algo.name.lower()](cfg.algo, agent_spec=agent_spec, device="cuda")
 
-    # policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone/scripts_paper/formation_ratecontroller.pt"))
+    # policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone/mappo_1_hover_ratecontroller.pt"))
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -223,7 +223,7 @@ def main(cfg):
             for k, v in traj_stats.items()
         }
 
-        # arr = trajs['agents']['action'].detach().cpu().numpy().squeeze()
+        # arr = trajs['agents']['action'].detach().cpu().numpy().squeeze(0)
         # T, A, F = arr.shape
         # timesteps = np.arange(1, T + 1)[:, None].repeat(A, axis=1)
         # agents = np.arange(A)[None, :].repeat(T, axis=0)

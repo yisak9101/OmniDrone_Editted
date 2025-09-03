@@ -263,8 +263,8 @@ class Formation(IsaacEnv):
         scene_utils.design_scene()
         target_pos_numpy = np.random.uniform(low=-2, high=2, size=3)
         self.target_pos = torch.tensor([0.0, 0.0, 0.5], device=self.device)
-        
-        
+
+
 
         # formation = self.cfg.task.formation
         # if isinstance(formation, str):
@@ -545,7 +545,7 @@ class Formation(IsaacEnv):
         pos = self.drone.pos
 
         cost_h = torch.vmap(cost_formation_hausdorff)(pos, self.formation).unsqueeze(dim=1)
-        
+
         distance = torch.norm(pos.mean(-2, keepdim=True) - self.target_pos, dim=-1)
         
         reward_formation =  1 / (1 + torch.square(cost_h * 1.6)) 
