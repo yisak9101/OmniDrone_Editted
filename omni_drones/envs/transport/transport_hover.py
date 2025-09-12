@@ -195,11 +195,6 @@ class TransportHover(IsaacEnv):
                 "observation_central": state_spec,
             }
         }).expand(self.num_envs).to(self.device)
-        self.state_spec = CompositeSpec({
-            "agents": {
-                "state": UnboundedContinuousTensorSpec((self.drone.n, drone_state_dim)).to(self.device),
-            }
-        }).expand(self.num_envs).to(self.device)
         self.action_spec = CompositeSpec({
             "agents": {
                 "action": torch.stack([self.drone.action_spec] * self.drone.n, dim=0),
