@@ -141,16 +141,11 @@ class Hover(IsaacEnv):
             )
             self.payload.initialize()
         
-        self.target_vis1 = ArticulationView(
-            "/World/envs/env_*/target1",
+        self.target_vis = ArticulationView(
+            "/World/envs/env_*/target",
             reset_xform_properties=False
         )
-        self.target_vis2 = ArticulationView(
-            "/World/envs/env_*/target2",
-            reset_xform_properties=False
-        )
-        self.target_vis1.initialize()
-        self.target_vis2.initialize()
+        self.target_vis.initialize()
         self.init_poses = self.drone.get_world_poses(clone=True)
         self.init_vels = torch.zeros_like(self.drone.get_velocities())
 
@@ -167,9 +162,8 @@ class Hover(IsaacEnv):
             torch.tensor([0., 0., 2.], device=self.device) * torch.pi
         )
 
-        self.target_pos = torch.tensor([[0.0, 0.0, 2.], [0.0, 0.0, 0.1]], device=self.device)
-        # self.target_pos = torch.tensor([[0.0, 0.0, 2.]], device=self.device)
-        self.target_heading = torch.zeros(self.num_envs, self.drone.n, 3, device=self.device)
+        self.target_pos = torch.tensor([[0.0, 0.0, 2.]], device=self.device)
+        self.target_heading = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self.alpha = 0.8
 
     def _design_scene(self):
@@ -180,33 +174,18 @@ class Hover(IsaacEnv):
         cfg = drone_model.cfg_cls(force_sensor=self.cfg.task.force_sensor)
         self.drone: MultirotorBase = drone_model(cfg=cfg)
 
-        target_vis_prim1 = prim_utils.create_prim(
-            prim_path="/World/envs/env_0/target1",
+        target_vis_prim = prim_utils.create_prim(
+            prim_path="/World/envs/env_0/target",
             usd_path=self.drone.usd_path,
             translation=(0.0, 0.0, 2.),
         )
 
         kit_utils.set_nested_collision_properties(
-            target_vis_prim1.GetPath(),
+            target_vis_prim.GetPath(), 
             collision_enabled=False
         )
         kit_utils.set_nested_rigid_body_properties(
-            target_vis_prim1.GetPath(),
-            disable_gravity=True
-        )
-
-        target_vis_prim2 = prim_utils.create_prim(
-            prim_path="/World/envs/env_0/target2",
-            usd_path=self.drone.usd_path,
-            translation=(0.0, 0.0, 1.),
-        )
-
-        kit_utils.set_nested_collision_properties(
-            target_vis_prim2.GetPath(),
-            collision_enabled=False
-        )
-        kit_utils.set_nested_rigid_body_properties(
-            target_vis_prim2.GetPath(),
+            target_vis_prim.GetPath(),
             disable_gravity=True
         )
 
@@ -216,8 +195,7 @@ class Hover(IsaacEnv):
             dynamic_friction=1.0,
             restitution=0.0,
         )
-        drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 2.), (0.0, 0.0, 1.)])[0]
-        # drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 2.)])[0]
+        drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 2.)])[0]
         if self.has_payload:
             attach_payload(drone_prim.GetPath().pathString)
         return ["/World/defaultGroundPlane"]
@@ -230,28 +208,25 @@ class Hover(IsaacEnv):
             self.time_encoding_dim = 4
             observation_dim += self.time_encoding_dim
 
-        observation_spec = CompositeSpec({
-            "obs_self": UnboundedContinuousTensorSpec((1, observation_dim)),
-        }).to(self.device)
         observation_central_spec = CompositeSpec({
             "drones": UnboundedContinuousTensorSpec((self.drone.n, drone_state_dim)),
         }).to(self.device)
 
         self.observation_spec = CompositeSpec({
             "agents": CompositeSpec({
-                "observation": observation_spec.expand(self.drone.n),
+                "observation": UnboundedContinuousTensorSpec((1, observation_dim), device=self.device),
                 "observation_central": observation_central_spec,
                 # "intrinsics": self.drone.intrinsics_spec.unsqueeze(0).to(self.device)
             })
         }).expand(self.num_envs).to(self.device)
         self.action_spec = CompositeSpec({
             "agents": CompositeSpec({
-                "action": torch.stack([self.drone.action_spec] * self.drone.n, dim=0),
+                "action": self.drone.action_spec.unsqueeze(0),
             })
         }).expand(self.num_envs).to(self.device)
         self.reward_spec = CompositeSpec({
             "agents": CompositeSpec({
-                "reward":  UnboundedContinuousTensorSpec((self.drone.n, 1))
+                "reward": UnboundedContinuousTensorSpec((1, 1))
             })
         }).expand(self.num_envs).to(self.device)
         self.done_spec = CompositeSpec({
@@ -261,7 +236,7 @@ class Hover(IsaacEnv):
         }).expand(self.num_envs).to(self.device)
         
         self.agent_spec["drone"] = AgentSpec(
-            "drone", self.drone.n,
+            "drone", 1,
             observation_key=("agents", "observation"),
             action_key=("agents", "action"),
             reward_key=("agents", "reward"),
@@ -270,7 +245,7 @@ class Hover(IsaacEnv):
         )
 
         stats_spec = CompositeSpec({
-            "return": UnboundedContinuousTensorSpec(self.drone.n),
+            "return": UnboundedContinuousTensorSpec(1),
             "episode_len": UnboundedContinuousTensorSpec(1),
             "pos_error": UnboundedContinuousTensorSpec(1),
             "heading_alignment": UnboundedContinuousTensorSpec(1),
@@ -290,8 +265,8 @@ class Hover(IsaacEnv):
     def _reset_idx(self, env_ids: torch.Tensor):
         self.drone._reset_idx(env_ids, self.training)
         
-        pos = self.init_pos_dist.sample((*env_ids.shape, self.drone.n))
-        rpy = self.init_rpy_dist.sample((*env_ids.shape, self.drone.n))
+        pos = self.init_pos_dist.sample((*env_ids.shape, 1))
+        rpy = self.init_rpy_dist.sample((*env_ids.shape, 1))
         rot = euler_to_quaternion(rpy)
         self.drone.set_world_poses(
             pos + self.envs_positions[env_ids].unsqueeze(1), rot, env_ids
@@ -316,8 +291,7 @@ class Hover(IsaacEnv):
         target_rpy = self.target_rpy_dist.sample((*env_ids.shape, 1))
         target_rot = euler_to_quaternion(target_rpy)
         self.target_heading[env_ids] = quat_axis(target_rot.squeeze(1), 0).unsqueeze(1)
-        self.target_vis1.set_world_poses(orientations=target_rot, env_indices=env_ids)
-        self.target_vis2.set_world_poses(orientations=target_rot, env_indices=env_ids)
+        self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
 
         self.stats[env_ids] = 0.
 
@@ -333,15 +307,11 @@ class Hover(IsaacEnv):
         self.rpos = self.target_pos - self.root_state[..., :3]
         self.rheading = self.target_heading - self.root_state[..., 13:16]
         
-        obs_self = [self.rpos, self.root_state[..., 3:], self.rheading,]
+        obs = [self.rpos, self.root_state[..., 3:], self.rheading,]
         if self.time_encoding:
             t = (self.progress_buf / self.max_episode_length).unsqueeze(-1)
-            obs_self.append(t.unsqueeze(1).expand(-1, self.drone.n, self.time_encoding_dim))
-        obs_self = torch.cat(obs_self, dim=-1)
-
-        obs = TensorDict({
-            "obs_self": obs_self.unsqueeze(2),
-        }, [self.num_envs, self.drone.n])
+            obs.append(t.expand(-1, self.time_encoding_dim).unsqueeze(1))
+        obs = torch.cat(obs, dim=-1)
 
         state = TensorDict({"drones": self.root_state}, self.batch_size)
 
@@ -381,23 +351,22 @@ class Hover(IsaacEnv):
             + reward_pose * (reward_up + reward_spin) 
             + reward_effort 
             + reward_action_smoothness
-        ).mean(dim=-1, keepdim=True)
+        )
         
         terminated = (self.drone.pos[..., 2] < 0.2) | (distance > 4)
-        terminated = terminated.any(-1, keepdim=True)
         truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
 
-        self.stats["pos_error"].lerp_(pos_error.mean(), (1-self.alpha))
-        self.stats["heading_alignment"].lerp_(heading_alignment.mean(), (1-self.alpha))
-        self.stats["uprightness"].lerp_(self.root_state[..., 18].mean(), (1-self.alpha))
-        self.stats["action_smoothness"].lerp_(-self.drone.throttle_difference.mean(), (1-self.alpha))
+        self.stats["pos_error"].lerp_(pos_error, (1-self.alpha))
+        self.stats["heading_alignment"].lerp_(heading_alignment, (1-self.alpha))
+        self.stats["uprightness"].lerp_(self.root_state[..., 18], (1-self.alpha))
+        self.stats["action_smoothness"].lerp_(-self.drone.throttle_difference, (1-self.alpha))
         self.stats["return"] += reward
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
 
         return TensorDict(
             {
                 "agents": {
-                    "reward": reward.unsqueeze(1).expand(-1, self.drone.n, 1)
+                    "reward": reward.unsqueeze(-1)
                 },
                 "done": terminated | truncated,
                 "terminated": terminated,
