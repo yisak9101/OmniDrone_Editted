@@ -150,16 +150,16 @@ class Hover(IsaacEnv):
         self.init_vels = torch.zeros_like(self.drone.get_velocities())
 
         self.init_pos_dist = D.Uniform(
-            torch.tensor([-2.5, -2.5, 1.], device=self.device),
-            torch.tensor([2.5, 2.5, 2.5], device=self.device)
+            torch.tensor([0., 0., 2.], device=self.device),
+            torch.tensor([0., 0., 2.], device=self.device)
         )
         self.init_rpy_dist = D.Uniform(
-            torch.tensor([-.2, -.2, 0.], device=self.device) * torch.pi,
-            torch.tensor([0.2, 0.2, 2.], device=self.device) * torch.pi
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi
         )
         self.target_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi
         )
 
         self.target_pos = torch.tensor([[0.0, 0.0, 2.]], device=self.device)
@@ -307,7 +307,7 @@ class Hover(IsaacEnv):
         self.rpos = self.target_pos - self.root_state[..., :3]
         self.rheading = self.target_heading - self.root_state[..., 13:16]
         
-        obs = [self.rpos, self.root_state[..., 3:], self.rheading,]
+        obs = [self.root_state[..., :3], self.root_state[..., 3:], self.rheading,]
         if self.time_encoding:
             t = (self.progress_buf / self.max_episode_length).unsqueeze(-1)
             obs.append(t.expand(-1, self.time_encoding_dim).unsqueeze(1))

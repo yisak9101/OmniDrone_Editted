@@ -19,8 +19,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -37,9 +36,13 @@ from dataclasses import dataclass
 from typing import Union
 import einops
 
+from controller import DroneTrajectory, LeeController
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
 from .common import GAE
+from ...utils.torch import quaternion_to_rotation_matrix, quaternion_to_euler
+
+import matplotlib.pyplot as plt
 
 @dataclass
 class PPOConfig:
@@ -168,9 +171,69 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
         self.value_norm = ValueNorm1(reward_spec.shape[-2:]).to(self.device)
-    
+
+        self.max_t = 800
+
+        self.traj = DroneTrajectory([[0,0,2],[0,0,0],[0,0,0],0], [[2,2,5],[0,0,0],[0,0,0],0], 0, self.max_t)
+        self.ctrl = LeeController(0.035, 0.6685, 0, [4,4,2])
+
+        self.reset_cnt = 0
+
+        self.target = np.zeros((self.max_t, 7))
+        self.real = np.zeros((self.max_t, 7))
+
     def __call__(self, tensordict: TensorDict):
         self.actor(tensordict)
+
+        t = tensordict['agents']['observation'][0,0,-1] * self.max_t
+        t = int(t)
+        p = tensordict['agents']['observation'][0,0,:3].cpu().numpy()
+        quat = tensordict['agents']['observation'][0,0,3:7]
+        v = tensordict['agents']['observation'][0,0,7:10].cpu().numpy()
+        rot = quaternion_to_rotation_matrix(quat).cpu().numpy()
+        yaw = quaternion_to_euler(quat)[..., -1]
+
+        vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
+        cur_state = [p, v, vec_rot]
+
+        if t == 0:
+            self.reset_cnt += 1
+        if self.reset_cnt == 4:
+            fig, axes = plt.subplots(7, 1, figsize=(10, 12), sharex=True)
+            title = ['pos x', 'pos y', 'pos z', 'vel x', 'vel y', 'vel z', 'yaw' ]
+
+            for i in range(7):
+                axes[i].plot(self.real[1:self.max_t, i], label=f"real")
+                axes[i].plot(self.target[1:self.max_t, i], label=f"target")
+                axes[i].legend()
+                axes[i].set_title(title[i])
+
+            axes[-1].set_xlabel("Sample index")
+            plt.tight_layout()
+            plt.show()
+
+            exit(0)
+
+        # trajectory generation
+        p_d, v_d, a_d, yaw_d = self.traj.get_trajectory(int(t), rotation=False)
+        des_state = [p_d, v_d, a_d, yaw_d]
+
+        # compute controller
+        cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
+        thrust = cmd[..., 0]
+        omega = cmd[..., 1:4]
+
+        if t + 1< self.max_t:
+            self.target[t + 1, :3] = p_d
+            self.target[t + 1, 3:6] = v_d
+            self.target[t + 1, 6] = yaw_d
+            self.real[t, :3] = p
+            self.real[t, 3:6] = v
+            self.real[t, 6] = yaw
+
+        tensordict['agents']['action'][..., 0:3] = torch.tensor(omega/ np.pi, device='cuda')
+        tensordict['agents']['action'][..., 3] = torch.tensor(thrust / 0.6685, device='cuda')
+
         self.critic(tensordict)
         tensordict.exclude("loc", "scale", "feature", inplace=True)
         return tensordict
