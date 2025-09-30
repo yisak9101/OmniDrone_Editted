@@ -164,13 +164,24 @@ class PPOPolicy(TensorDictModuleBase):
             
             self.actor.apply(init_)
             self.critic.apply(init_)
+        # actor_module.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone/policy.pt"))
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
         self.value_norm = ValueNorm1(reward_spec.shape[-2:]).to(self.device)
-    
+
+        # self.actor_policy = DroneHoverPolicy("/home/mlic/Repo/OmniDrone/policy.pt")
+
     def __call__(self, tensordict: TensorDict):
         self.actor(tensordict)
+        # rel_pos = tensordict['agents']['observation'][...,:3].squeeze()
+        # quat = tensordict['agents']['observation'][...,3:7].squeeze()
+        # vel = tensordict['agents']['observation'][...,7:10].squeeze()
+        # ang_vel = tensordict['agents']['observation'][...,10:13].squeeze()
+        # prev_throttle = tensordict['agents']['observation'][...,19:23].squeeze()
+        # rel_heading = tensordict['agents']['observation'][...,23:26].squeeze()
+        #
+        # tensordict['agents']['action'] = self.actor_policy.forward(rel_pos, quat, vel, ang_vel, prev_throttle).unsqueeze(0)
         self.critic(tensordict)
         tensordict.exclude("loc", "scale", "feature", inplace=True)
         return tensordict

@@ -198,11 +198,15 @@ class Hover(IsaacEnv):
         drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 2.)])[0]
         if self.has_payload:
             attach_payload(drone_prim.GetPath().pathString)
+
+        self.n_action = self.drone.action_spec.shape[0]
+        self.prev_action = torch.zeros(self.num_envs, self.drone.n, self.n_action, device=self.device)
         return ["/World/defaultGroundPlane"]
 
     def _set_specs(self):
         drone_state_dim = self.drone.state_spec.shape[-1]
         observation_dim = drone_state_dim + 3
+        observation_dim += self.n_action # add prev action dim
 
         if self.cfg.task.time_encoding:
             self.time_encoding_dim = 4
@@ -288,10 +292,12 @@ class Hover(IsaacEnv):
         self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
 
         self.stats[env_ids] = 0.
+        self.prev_action[...] = 0
 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]
         self.effort = self.drone.apply_action(actions)
+        self.prev_action = actions
 
     def _compute_state_and_obs(self):
         self.root_state = self.drone.get_state()
@@ -301,7 +307,7 @@ class Hover(IsaacEnv):
         self.rpos = self.target_pos - self.root_state[..., :3]
         self.rheading = self.target_heading - self.root_state[..., 13:16]
         
-        obs = [self.rpos, self.root_state[..., 3:], self.rheading,]
+        obs = [self.rpos, self.root_state[..., 3:], self.prev_action, self.rheading,]
         if self.time_encoding:
             t = (self.progress_buf / self.max_episode_length).unsqueeze(-1)
             obs.append(t.expand(-1, self.time_encoding_dim).unsqueeze(1))
