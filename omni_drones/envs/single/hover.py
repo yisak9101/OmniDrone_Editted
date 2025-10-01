@@ -353,7 +353,8 @@ class Hover(IsaacEnv):
             + reward_action_smoothness
         )
         
-        terminated = (self.drone.pos[..., 2] < 0.2) | (distance > 4)
+        # terminated = (self.drone.pos[..., 2] < 0.2) | (distance > 4)
+        terminated = (self.drone.pos[..., 2] < 0.2)
         truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
 
         self.stats["pos_error"].lerp_(pos_error, (1-self.alpha))

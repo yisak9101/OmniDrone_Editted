@@ -40,7 +40,7 @@ from controller import DroneTrajectory, LeeController
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
 from .common import GAE
-from ...utils.torch import quaternion_to_rotation_matrix, quaternion_to_euler
+from ...utils.torch import quaternion_to_rotation_matrix, quaternion_to_euler, quat_rotate_inverse
 
 import matplotlib.pyplot as plt
 
@@ -174,13 +174,18 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.max_t = 800
 
-        self.traj = DroneTrajectory([[0,0,2],[0,0,0],[0,0,0],0], [[2,2,5],[0,0,0],[0,0,0],0], 0, self.max_t)
+        self.traj1 = DroneTrajectory([[0,0,2],[0,0,0],[0,0,0],0], [[2,2,4],[0,0,0],[0,0,0],0], self.max_t / 4 * 0, self.max_t / 4 * 1)
+        self.traj2 = DroneTrajectory([[2,2,4],[0,0,0],[0,0,0],0], [[4,0,6],[0,0,0],[0,0,0],0], self.max_t / 4 * 1, self.max_t / 4 * 2)
+        self.traj3 = DroneTrajectory([[4,0,6],[0,0,0],[0,0,0],0], [[2,-2,4],[0,0,0],[0,0,0],0], self.max_t / 4 * 2, self.max_t / 4 * 3)
+        self.traj4 = DroneTrajectory([[2,-2,4],[0,0,0],[0,0,0],0], [[0,0,2],[0,0,0],[0,0,0],0], self.max_t / 4 * 3, self.max_t / 4 * 4)
         self.ctrl = LeeController(0.035, 0.6685, 0, [4,4,2])
 
         self.reset_cnt = 0
 
-        self.target = np.zeros((self.max_t, 7))
-        self.real = np.zeros((self.max_t, 7))
+        self.target = np.zeros((self.max_t, 3))
+        self.real = np.zeros((self.max_t, 3))
+
+        self.target_rate = None
 
     def __call__(self, tensordict: TensorDict):
         self.actor(tensordict)
@@ -190,8 +195,12 @@ class PPOPolicy(TensorDictModuleBase):
         p = tensordict['agents']['observation'][0,0,:3].cpu().numpy()
         quat = tensordict['agents']['observation'][0,0,3:7]
         v = tensordict['agents']['observation'][0,0,7:10].cpu().numpy()
+        ang_v = tensordict['agents']['observation'][0,0,10:13].cpu().numpy()
         rot = quaternion_to_rotation_matrix(quat).cpu().numpy()
         yaw = quaternion_to_euler(quat)[..., -1]
+
+        rate = quat_rotate_inverse(tensordict['agents']['observation'][...,3:7], tensordict['agents']['observation'][...,10:13])
+        self.real[t, :] = rate.cpu().numpy()
 
         vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
         cur_state = [p, v, vec_rot]
@@ -199,10 +208,10 @@ class PPOPolicy(TensorDictModuleBase):
         if t == 0:
             self.reset_cnt += 1
         if self.reset_cnt == 4:
-            fig, axes = plt.subplots(7, 1, figsize=(10, 12), sharex=True)
-            title = ['pos x', 'pos y', 'pos z', 'vel x', 'vel y', 'vel z', 'yaw' ]
+            fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+            title = ['body ang vel - x', 'body ang vel - y', 'body ang vel - z' ]
 
-            for i in range(7):
+            for i in range(3):
                 axes[i].plot(self.real[1:self.max_t, i], label=f"real")
                 axes[i].plot(self.target[1:self.max_t, i], label=f"target")
                 axes[i].legend()
@@ -215,7 +224,15 @@ class PPOPolicy(TensorDictModuleBase):
             exit(0)
 
         # trajectory generation
-        p_d, v_d, a_d, yaw_d = self.traj.get_trajectory(int(t), rotation=False)
+        if self.max_t / 4 * 0 <= t < self.max_t / 4 * 1:
+            p_d, v_d, a_d, yaw_d = self.traj1.get_trajectory(int(t), rotation=False)
+        elif self.max_t / 4 * 1 <= t < self.max_t / 4 * 2:
+            p_d, v_d, a_d, yaw_d = self.traj2.get_trajectory(int(t), rotation=False)
+        elif self.max_t / 4 * 2 <= t < self.max_t / 4 * 3:
+            p_d, v_d, a_d, yaw_d = self.traj3.get_trajectory(int(t), rotation=False)
+        elif self.max_t / 4 * 3 <= t < self.max_t / 4 * 4:
+            p_d, v_d, a_d, yaw_d = self.traj4.get_trajectory(int(t))
+
         des_state = [p_d, v_d, a_d, yaw_d]
 
         # compute controller
@@ -223,16 +240,11 @@ class PPOPolicy(TensorDictModuleBase):
         thrust = cmd[..., 0]
         omega = cmd[..., 1:4]
 
-        if t + 1< self.max_t:
-            self.target[t + 1, :3] = p_d
-            self.target[t + 1, 3:6] = v_d
-            self.target[t + 1, 6] = yaw_d
-            self.real[t, :3] = p
-            self.real[t, 3:6] = v
-            self.real[t, 6] = yaw
-
         tensordict['agents']['action'][..., 0:3] = torch.tensor(omega/ np.pi, device='cuda')
         tensordict['agents']['action'][..., 3] = torch.tensor(thrust / 0.6685, device='cuda')
+
+        if t + 1 < self.max_t:
+            self.target[t+1, :] = omega
 
         self.critic(tensordict)
         tensordict.exclude("loc", "scale", "feature", inplace=True)
