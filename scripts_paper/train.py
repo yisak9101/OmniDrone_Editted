@@ -278,13 +278,13 @@ def main(cfg):
         
         info.update(policy.train_op(data.to_tensordict()))
 
-        if eval_interval > 0 and i % eval_interval == 0:
+        if eval_interval > 0 and i > 0 and i % eval_interval == 0:
             logging.info(f"Eval at {collector._frames} steps.")
             info.update(evaluate())
             env.train()
             base_env.train()
 
-        if save_interval > 0 and i % save_interval == 0:
+        if save_interval > 0 and i > 0 and i % save_interval == 0:
             if hasattr(policy, "state_dict"):
                 logging.info(f"Save checkpoint")
                 torch.save(policy.state_dict(), "checkpoint.pt")
