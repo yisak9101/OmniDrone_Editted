@@ -109,7 +109,7 @@ class TransportHover(IsaacEnv):
         self.init_drone_vels = torch.zeros_like(self.drone.get_velocities())
 
         self.payload_target_rpy_dist = D.Uniform(
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi,
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
             torch.tensor([0., 0., 2.], device=self.device) * torch.pi
         )
         payload_mass_scale = self.cfg.task.payload_mass_scale
@@ -118,19 +118,15 @@ class TransportHover(IsaacEnv):
             torch.as_tensor(payload_mass_scale[1] * self.drone.MASS_0.sum(), device=self.device)
         )
         self.init_pos_dist = D.Uniform(
-            torch.tensor([5., 5., 2.5], device=self.device),
-            torch.tensor([5., 5., 2.5], device=self.device)
+            torch.tensor([-3., -3., 1.], device=self.device),
+            torch.tensor([3., 3., 2.5], device=self.device)
         )
         self.init_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
-            torch.tensor([0., 0., 0.], device=self.device) * torch.pi
-        )
-        self.height_dist = D.Uniform(
-            torch.tensor([0., 0., 2.5], device=self.device),
-            torch.tensor([0., 0., 2.5], device=self.device)
+            torch.tensor([0., 0., 2.], device=self.device) * torch.pi
         )
         # self.payload_target_pos = torch.zeros((self.num_envs, 3), device=self.device)
-        self.payload_target_pos = torch.tensor([0., 0., 1], device=self.device)
+        self.payload_target_pos = torch.tensor([0., 0., 1.5], device=self.device)
         self.payload_target_heading = torch.zeros(self.num_envs, 3, device=self.device)
         self.last_distance = torch.zeros(self.num_envs, 1, device=self.device)
 
@@ -152,7 +148,7 @@ class TransportHover(IsaacEnv):
 
         DynamicCuboid(
             "/World/envs/env_0/payloadTargetVis",
-            translation=torch.tensor([0., 0., 1.]),
+            translation=torch.tensor([0., 0., 1.5]),
             # scale=torch.tensor([0.75, 0.5, 0.2]),
             # scale=torch.tensor([0.6, 0.9, 0.3]),  # D1
             # scale=torch.tensor([0.4, 0.4, 0.3]),  # A1
@@ -386,7 +382,7 @@ class TransportHover(IsaacEnv):
 
         distance = torch.norm(self.target_payload_rpose, dim=-1, keepdim=True)
         # reward_pose = (pos_distance_ratio + heading_distance_ratio) / 2  # torch.exp(-distance * self.reward_distance_scale)
-        reward_pose = 5 * pos_distance_ratio + 1 * heading_distance_ratio  # torch.exp(-curr_heading_distance * self.reward_distance_scale)
+        reward_pose = 10 * pos_distance_ratio + 1 * heading_distance_ratio  # torch.exp(-curr_heading_distance * self.reward_distance_scale)
 
         heading_goal_reward = (curr_heading_distance.view(-1, 1) <= self.heading_distance_margin)
 
