@@ -251,14 +251,17 @@ class RateController(Transform):
     
     def transform_input_spec(self, input_spec: TensorSpec) -> TensorSpec:
         action_spec = input_spec[("full_action_spec", *self.action_key)]
-        spec = UnboundedContinuousTensorSpec(action_spec.shape[:-1]+(4,), device=action_spec.device)
+        spec = UnboundedContinuousTensorSpec(action_spec.shape[:-1]+(3,), device=action_spec.device)
         input_spec[("full_action_spec", *self.action_key)] = spec
         return input_spec
-    
+
     def _inv_call(self, tensordict: TensorDictBase) -> TensorDictBase:
         drone_state = tensordict[("info", "drone_state")][..., :13]
         action = tensordict[self.action_key]
-        target_rate, target_thrust = action.split([3, 1], -1)
+        _action = torch.zeros(action.shape[0], action.shape[1], 4, device=action.device)
+        _action[..., :2] = action[..., :2]
+        _action[..., 3] = action[..., 2]
+        target_rate, target_thrust = _action.split([3, 1], -1)
         target_thrust = ((target_thrust + 1) / 2).clip(0.) * self.max_thrust
         cmds = self.controller(
             drone_state, 
