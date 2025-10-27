@@ -2,7 +2,7 @@ name: mappo
 
 # ppo
 train_every: 64
-num_minibatches: 16
+num_minibatches: 64
 ppo_epochs: 4
 clip_param: 0.1
 entropy_coef: 0.001

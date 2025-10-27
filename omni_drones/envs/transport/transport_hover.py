@@ -372,19 +372,12 @@ class TransportHover(IsaacEnv):
         pos_distance_ratio = 1 - 1 * curr_distance / self.init_distance  # ([100])
         pos_distance_ratio = pos_distance_ratio.view(-1, 1)
 
-        curr_heading_distance = (self.payload_target_heading - self.payload_heading) ** 2
-        curr_heading_distance = torch.sum(curr_heading_distance, dim=-1)
-        curr_heading_distance = torch.sqrt(curr_heading_distance + 1e-6)  # ([100])
-        # curr_heading_distance = curr_heading_distance.view(-1, 1)
-        # heading_distance_ratio = 1 - 1 * curr_heading_distance / self.init_heading_distance  # ([100])
-        heading_distance_ratio = 1 / (curr_heading_distance + 1)
-        heading_distance_ratio = heading_distance_ratio.view(-1, 1)
+        cos_theta = torch.sum(self.payload_target_heading * self.payload_heading, dim=-1, keepdim=True)
+        curr_heading = torch.exp(5 * cos_theta)
 
         distance = torch.norm(self.target_payload_rpose, dim=-1, keepdim=True)
         # reward_pose = (pos_distance_ratio + heading_distance_ratio) / 2  # torch.exp(-distance * self.reward_distance_scale)
-        reward_pose = 10 * pos_distance_ratio + 1 * heading_distance_ratio  # torch.exp(-curr_heading_distance * self.reward_distance_scale)
-
-        heading_goal_reward = (curr_heading_distance.view(-1, 1) <= self.heading_distance_margin)
+        reward_pose = 10 * pos_distance_ratio + 0.1 * curr_heading  # torch.exp(-curr_heading_distance * self.reward_distance_scale)
 
         up = self.payload_up[:, 2]
         reward_up = torch.square((up + 1) / 2).unsqueeze(-1)
@@ -402,7 +395,7 @@ class TransportHover(IsaacEnv):
         reward_action_smoothness = self.reward_action_smoothness_weight * -self.drone.throttle_difference
 
         reward[:] = (
-                    0.01 * reward_separation * (
+                    0.001 * reward_separation * (
                     reward_pose
                     + reward_pose * (reward_up + reward_spin + reward_swing)
                     + reward_joint_limit
