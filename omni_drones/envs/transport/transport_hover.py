@@ -110,7 +110,7 @@ class TransportHover(IsaacEnv):
 
         self.payload_target_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi
+            torch.tensor([0., 0., 1.], device=self.device) * torch.pi
         )
         payload_mass_scale = self.cfg.task.payload_mass_scale
         self.payload_mass_dist = D.Uniform(
@@ -123,7 +123,7 @@ class TransportHover(IsaacEnv):
         )
         self.init_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
-            torch.tensor([0., 0., 2.], device=self.device) * torch.pi
+            torch.tensor([0., 0., 1.], device=self.device) * torch.pi
         )
         # self.payload_target_pos = torch.zeros((self.num_envs, 3), device=self.device)
         self.payload_target_pos = torch.tensor([0., 0., 1.5], device=self.device)
@@ -376,7 +376,7 @@ class TransportHover(IsaacEnv):
         curr_heading = torch.exp(5 * cos_theta)
 
         # reward_pose = (pos_distance_ratio + heading_distance_ratio) / 2  # torch.exp(-distance * self.reward_distance_scale)
-        reward_pose = 10 * pos_distance_ratio + torch.where(curr_distance.unsqueeze(-1) < 1, curr_heading * 0.5,  0) # torch.exp(-curr_heading_distance * self.reward_distance_scale)
+        reward_pose = 10 * pos_distance_ratio + torch.where(curr_distance.unsqueeze(-1) < 1, pos_distance_ratio * curr_heading,  0) # torch.exp(-curr_heading_distance * self.reward_distance_scale)
 
         up = self.payload_up[:, 2]
         reward_up = torch.square((up + 1) / 2).unsqueeze(-1)
