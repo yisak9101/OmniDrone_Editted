@@ -376,7 +376,7 @@ class TransportHover(IsaacEnv):
         curr_heading = torch.exp(5 * cos_theta)
 
         # reward_pose = (pos_distance_ratio + heading_distance_ratio) / 2  # torch.exp(-distance * self.reward_distance_scale)
-        reward_pose = 10 * pos_distance_ratio + torch.where(curr_distance.unsqueeze(-1) < 1, curr_heading * 0.1,  0) # torch.exp(-curr_heading_distance * self.reward_distance_scale)
+        reward_pose = 10 * pos_distance_ratio + torch.where(curr_distance.unsqueeze(-1) < 1, curr_heading * 0.5,  0) # torch.exp(-curr_heading_distance * self.reward_distance_scale)
 
         up = self.payload_up[:, 2]
         reward_up = torch.square((up + 1) / 2).unsqueeze(-1)
