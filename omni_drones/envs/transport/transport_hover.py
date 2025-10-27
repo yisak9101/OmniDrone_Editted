@@ -375,9 +375,8 @@ class TransportHover(IsaacEnv):
         cos_theta = torch.sum(self.payload_target_heading * self.payload_heading, dim=-1, keepdim=True)
         curr_heading = torch.exp(5 * cos_theta)
 
-        distance = torch.norm(self.target_payload_rpose, dim=-1, keepdim=True)
         # reward_pose = (pos_distance_ratio + heading_distance_ratio) / 2  # torch.exp(-distance * self.reward_distance_scale)
-        reward_pose = 10 * pos_distance_ratio + 0.1 * curr_heading  # torch.exp(-curr_heading_distance * self.reward_distance_scale)
+        reward_pose = 10 * pos_distance_ratio + torch.where(curr_distance.unsqueeze(-1) < 1, curr_heading * 0.5,  0) # torch.exp(-curr_heading_distance * self.reward_distance_scale)
 
         up = self.payload_up[:, 2]
         reward_up = torch.square((up + 1) / 2).unsqueeze(-1)
@@ -416,7 +415,7 @@ class TransportHover(IsaacEnv):
         self.stats["return"].add_(reward.mean(1))
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(-1)
         self.stats["pos_error"].lerp_(self.pos_error, (1 - self.alpha))
-        self.stats["heading_alignment"].lerp_(self.heading_alignment, (1 - self.alpha))
+        self.stats["heading_alignment"].lerp_(self.heading_alignment.where(curr_distance.unsqueeze(-1) < 1, 0), (1 - self.alpha))
         self.stats["uprightness"].lerp_(self.payload_up[:, 2].unsqueeze(-1), (1 - self.alpha))
         self.stats["action_smoothness"].lerp_(-self.drone.throttle_difference, (1 - self.alpha))
         return TensorDict(
