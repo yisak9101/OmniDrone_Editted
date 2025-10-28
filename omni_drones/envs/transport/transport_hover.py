@@ -38,7 +38,6 @@ from omni_drones.robots.drone import MultirotorBase
 
 from omni_drones.utils.payload import Payload
 from .utils import TransportationGroup, TransportationCfg
-import omni_drones.utils.torch as util
 
 import pdb
 
@@ -177,13 +176,13 @@ class TransportHover(IsaacEnv):
             payload_state_dim += self.time_encoding_dim
         
         observation_spec = CompositeSpec({
-            "obs_self": UnboundedContinuousTensorSpec((1, drone_state_dim + 3)).to(self.device),
+            "obs_self": UnboundedContinuousTensorSpec((1, drone_state_dim)).to(self.device),
             "obs_others": UnboundedContinuousTensorSpec((self.drone.n-1, 13+1)).to(self.device),
             "obs_payload": UnboundedContinuousTensorSpec((1, payload_state_dim)).to(self.device)
         })
 
         state_spec = CompositeSpec(
-            drones=UnboundedContinuousTensorSpec((self.drone.n, drone_state_dim + 3)).to(self.device),
+            drones=UnboundedContinuousTensorSpec((self.drone.n, drone_state_dim)).to(self.device),
             payload=UnboundedContinuousTensorSpec((1, payload_state_dim)).to(self.device)
         )
         self.observation_spec = CompositeSpec({
@@ -231,9 +230,6 @@ class TransportHover(IsaacEnv):
         self.stats = stats_spec.zero()
     
     def _reset_idx(self, env_ids: torch.Tensor):
-        util.last_action.index_fill_(0, env_ids, 0)
-        util.last_action_diff.index_fill_(0, env_ids, 0)
-
         pos = self.init_pos_dist.sample(env_ids.shape)
         rpy = self.init_rpy_dist.sample(env_ids.shape)
         # self.payload_target_pos[env_ids, 2] = self.height_dist.sample(env_ids.shape)[:, 2]
@@ -319,7 +315,7 @@ class TransportHover(IsaacEnv):
         obs = TensorDict({}, [self.num_envs, self.drone.n])
         identity = torch.eye(self.drone.n, device=self.device).expand(self.num_envs, -1, -1)
         obs["obs_self"] = torch.cat(
-            [-payload_drone_rpos, self.drone_states[..., 3:], identity, util.last_action], dim=-1
+            [-payload_drone_rpos, self.drone_states[..., 3:], identity], dim=-1
         ).unsqueeze(2) # [..., 1, state_dim]
         obs["obs_others"] = torch.cat(
             [self.drone_rpos, self.drone_pdist, torch.vmap(others)(self.drone_states[..., 3:13])], dim=-1
@@ -395,7 +391,7 @@ class TransportHover(IsaacEnv):
         reward_separation = torch.square(separation / self.safe_distance).clamp(0, 1)
         reward_joint_limit = 0.5 * torch.mean(1 - torch.square(joint_positions), dim=-1)
 
-        reward_action_smoothness = self.reward_action_smoothness_weight * -util.last_action_diff
+        reward_action_smoothness = self.reward_action_smoothness_weight * -self.drone.throttle_difference
 
         reward[:] = (
                     0.001 * reward_separation * (
@@ -421,7 +417,7 @@ class TransportHover(IsaacEnv):
         self.stats["pos_error"].lerp_(self.pos_error, (1 - self.alpha))
         self.stats["heading_alignment"].lerp_(self.heading_alignment.where(curr_distance.unsqueeze(-1) < 1, 0), (1 - self.alpha))
         self.stats["uprightness"].lerp_(self.payload_up[:, 2].unsqueeze(-1), (1 - self.alpha))
-        self.stats["action_smoothness"].lerp_(-util.last_action_diff, (1 - self.alpha))
+        self.stats["action_smoothness"].lerp_(-self.drone.throttle_difference, (1 - self.alpha))
         return TensorDict(
             {
                 "agents": {"reward": reward},

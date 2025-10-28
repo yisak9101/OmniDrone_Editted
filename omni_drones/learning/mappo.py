@@ -31,7 +31,6 @@ from tensordict import TensorDict
 from tensordict.utils import expand_right
 from tensordict.nn import make_functional, TensorDictModule, TensorDictParams
 from torch.optim import lr_scheduler
-import omni_drones.utils.torch as util
 
 from torchrl.data import (
     BoundedTensorSpec,
@@ -105,9 +104,6 @@ class MAPPOPolicy(object):
         )
 
         self.n_updates = 0
-
-        util.last_action = torch.zeros(self.agent_spec.action_spec.shape, device=device)
-        util.last_action_diff = torch.zeros(self.agent_spec.action_spec.shape[0:2], device=device)
 
     @property
     def act_logps_name(self):
@@ -209,9 +205,6 @@ class MAPPOPolicy(object):
         actor_output = torch.vmap(self.actor, in_dims=(1, 0), out_dims=1, randomness="different")(
             actor_input, self.actor_params, deterministic=deterministic
         )
-
-        util.last_action_diff[:] = (util.last_action - actor_output['agents']['action'] ** 2).sum(dim=-1)
-        util.last_action[:] = actor_output['agents']['action']
 
         tensordict.update(actor_output)
         tensordict.update(self.value_op(tensordict))

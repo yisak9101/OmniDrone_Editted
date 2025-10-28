@@ -268,5 +268,3 @@ def symlog(x: torch.Tensor):
 def symexp(x: torch.Tensor):
     return torch.sign(x) * (torch.exp(torch.abs(x)) - 1)
 
-last_action = None
-last_action_diff = None
