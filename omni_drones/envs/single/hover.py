@@ -34,7 +34,7 @@ from omni_drones.utils.torch import euler_to_quaternion, quat_axis
 
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, DiscreteTensorSpec
-
+import logging
 
 def attach_payload(parent_path):
     from omni.isaac.core import objects
@@ -124,6 +124,25 @@ class Hover(IsaacEnv):
         self.drone.initialize()
         if "drone" in self.randomization:
             self.drone.setup_randomization(self.randomization["drone"])
+        mass_scale_range = [0.8, 1.2]
+
+        # 2. 드론의 기본 질량(MASS_0)을 가져옵니다. (initialize()에서 이미 계산됨)
+        base_mass = self.drone.MASS_0 
+
+        # 3. 질량의 최소/최대 범위를 계산합니다.
+        mass_low = base_mass * mass_scale_range[0]
+        mass_high = base_mass * mass_scale_range[1]
+
+        # 4. 'train' 모드일 때 사용할 'mass' 분포를 생성합니다.
+        mass_distribution = D.Uniform(mass_low, mass_high)
+
+        # 5. drone 객체의 비어있는 randomization 딕셔너리에 이 분포를 직접 삽입합니다.
+        self.drone.randomization["train"]["mass"] = mass_distribution
+
+        logging.info(
+            f"Manually injected mass randomization (train): "
+            f"{mass_low.item():.3f}kg to {mass_high.item():.3f}kg"
+        )
         if "payload" in self.randomization:
             payload_cfg = self.randomization["payload"]
             self.payload_z_dist = D.Uniform(
@@ -165,6 +184,61 @@ class Hover(IsaacEnv):
         self.target_pos = torch.tensor([[0.0, 0.0, 2.]], device=self.device)
         self.target_heading = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self.alpha = 0.8
+
+        action_delay_range = [0,2]
+        self.min_action_delay_steps = int(action_delay_range[0])
+        self.max_action_delay_steps = int(action_delay_range[1])
+
+        tau_curriculum_cfg = self.randomization.get("drone", {}).get("tau_curriculum", {})
+        if tau_curriculum_cfg is not False:
+            self.tau_curriculum_enabled = True
+            # [시작 범위]와 [종료 범위]를 텐서로 저장
+            self.tau_start_range = torch.tensor(
+                tau_curriculum_cfg.get("start_range", [0.99, 1.01]), device=self.device
+            )
+            self.tau_end_range = torch.tensor(
+                tau_curriculum_cfg.get("end_range", [0.7, 1.3]), device=self.device
+            )
+            # 커리큘럼을 완료할 총 스텝 수 (매우 중요!)
+            self.tau_curriculum_total_steps = torch.tensor(
+                float(tau_curriculum_cfg.get("total_steps", 1e7)), 
+                device=self.device
+            )
+            
+            # drone 객체에 '현재 범위'를 저장할 변수를 만들어줍니다.
+            # 시작 범위로 초기화합니다.
+            self.drone.current_tau_range = self.tau_start_range.clone()
+        else:
+            self.tau_curriculum_enabled = False
+
+        if self.max_action_delay_steps > 0:
+            # 버퍼의 크기는 최대 딜레이 스텝 + 1 (새 액션을 저장할 공간)
+            self.buffer_size = self.max_action_delay_steps + 1
+            
+            # (num_envs, buffer_size, drone_n, n_action) 크기의 버퍼 생성
+            self.action_buffer = torch.zeros(
+                self.num_envs, 
+                self.buffer_size, 
+                self.drone.n, 
+                self.n_action, 
+                device=self.device
+            )
+            
+            # 각 환경의 현재 딜레이 스텝을 저장할 텐서
+            self.current_action_delay_steps = torch.zeros(
+                self.num_envs, dtype=torch.long, device=self.device
+            )
+            
+            # 각 환경의 버퍼 인덱스를 저장할 텐서 (Circular Buffer용)
+            self.buffer_idx = torch.zeros(
+                self.num_envs, dtype=torch.long, device=self.device
+            )
+            
+            # 리셋 시 사용할 기본 액션 (0으로 채움)
+            self.default_action = torch.zeros(
+                self.drone.n, self.n_action, device=self.device
+            )
+        self.frame_count = 0
 
     def _design_scene(self):
         import omni_drones.utils.kit as kit_utils
@@ -271,6 +345,7 @@ class Hover(IsaacEnv):
         )
         self.drone.set_velocities(self.init_vels[env_ids], env_ids)
 
+
         if self.has_payload:
             # TODO@btx0424: workout a better way 
             payload_z = self.payload_z_dist.sample(env_ids.shape)
@@ -292,12 +367,85 @@ class Hover(IsaacEnv):
         self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
 
         self.stats[env_ids] = 0.
-        self.prev_action[...] = 0
+        self.prev_action[env_ids] = 0.0 # (수정된 코드: 해당 env_ids만 리셋)
 
+        # 딜레이가 활성화된 경우 (max_delay > 0)
+        if self.max_action_delay_steps > 0:
+            # 1. 이 환경들의 딜레이 스텝 수를 min~max 범위에서 새로 샘플링
+            new_delays = torch.randint(
+                self.min_action_delay_steps,
+                self.max_action_delay_steps + 1,
+                (len(env_ids),),
+                device=self.device,
+                dtype=torch.long
+            )
+            self.current_action_delay_steps[env_ids] = new_delays
+            
+            # 2. 이 환경들의 액션 버퍼를 기본 액션(0)으로 채움
+            self.action_buffer[env_ids] = self.default_action.unsqueeze(1).expand(
+                len(env_ids), self.buffer_size, -1, -1
+            )
+            
+            # 3. 이 환경들의 버퍼 인덱스를 0으로 리셋
+            self.buffer_idx[env_ids] = 0
+
+    # def _pre_sim_step(self, tensordict: TensorDictBase):
+    #     actions = tensordict[("agents", "action")]
+    #     self.effort = self.drone.apply_action(actions)
+    #     self.prev_action = actions
+    
     def _pre_sim_step(self, tensordict: TensorDictBase):
-        actions = tensordict[("agents", "action")]
-        self.effort = self.drone.apply_action(actions)
-        self.prev_action = actions
+        # PPO가 생성한 새로운 액션
+        new_actions = tensordict[("agents", "action")]
+
+        self.frame_count += 1
+        # 딜레이가 비활성화된 경우 (max_delay == 0)
+        if self.max_action_delay_steps == 0:
+            action_to_apply = new_actions
+        
+        # 딜레이가 활성화된 경우
+        else:
+            # 1. 현재 버퍼 인덱스와 딜레이 스텝 가져오기
+            current_buffer_idx = self.buffer_idx
+            delay_steps = self.current_action_delay_steps
+            
+            # 2. 적용할 액션의 인덱스 계산 (N 스텝 전)
+            # (현재 인덱스 - 딜레이 스텝 + 버퍼 크기) % 버퍼 크기
+            apply_buffer_idx = (current_buffer_idx - delay_steps + self.buffer_size) % self.buffer_size
+            
+            # 3. 모든 환경에 대한 인덱스 (Batch 인덱싱용)
+            env_indices = torch.arange(self.num_envs, device=self.device)
+            
+            # 4. 버퍼에서 N 스텝 전의 '지연된 액션' 가져오기
+            action_to_apply = self.action_buffer[env_indices, apply_buffer_idx]
+            
+            # 5. 버퍼의 '현재' 위치에 '새로운 액션' 저장하기
+            self.action_buffer[env_indices, current_buffer_idx] = new_actions
+            
+            # 6. 버퍼 인덱스를 다음 칸으로 이동 (Circular)
+            self.buffer_idx = (current_buffer_idx + 1) % self.buffer_size
+
+        # 7. '지연된 액션'을 시뮬레이터에 적용
+
+        if self.tau_curriculum_enabled and self.training:
+            
+            # IsaacEnv의 전체 학습 스텝 수(self.frame_count)를 사용합니다.
+            # 0.0 ~ 1.0 사이의 진행률을 계산합니다.
+            progress = (self.frame_count / self.tau_curriculum_total_steps)
+            progress = torch.clamp(progress, 0.0, 1.0) # 1.0을 넘지 않도록
+            
+            # 선형 보간(linear interpolation)을 통해 현재 범위를 계산합니다.
+            # current = (1-p) * start + p * end
+            current_range = (1.0 - progress) * self.tau_start_range + progress * self.tau_end_range
+            
+            # 계산된 '현재 범위'를 drone 객체에 업데이트해줍니다.
+            self.drone.current_tau_range = current_range
+        
+        self.effort = self.drone.apply_action(action_to_apply)
+        
+        # 8. prev_action은 PPO가 방금 생성한 '새로운 액션'으로 유지
+        # (다음 state 관측에 사용하기 위함)
+        self.prev_action = new_actions
 
     def _compute_state_and_obs(self):
         self.root_state = self.drone.get_state()

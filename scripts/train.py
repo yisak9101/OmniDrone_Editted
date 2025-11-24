@@ -7,6 +7,7 @@ import torch
 import numpy as np
 import pandas as pd
 import wandb
+import imageio
 
 from tqdm import tqdm
 from omegaconf import OmegaConf
@@ -177,6 +178,8 @@ def main(cfg):
             fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
             format="mp4"
         )
+        if len(render_callback.frames):
+            imageio.mimsave("./video.mp4", render_callback.frames, fps=0.5 / cfg.sim.dt)
         
         # log distributions
         # df = pd.DataFrame(traj_stats)
@@ -210,7 +213,13 @@ def main(cfg):
         if save_interval > 0 and i % save_interval == 0:
             try:
                 ckpt_path = os.path.join(run.dir, f"checkpoint_{collector._frames}.pt")
+                ckpt_module_path = os.path.join(run.dir, f"checkpoint_module_{collector._frames}.pt")
+                ckpt_module_path2 = os.path.join(run.dir, f"checkpoint_module2_{collector._frames}.pt")
+                ckpt_module_path3 = os.path.join(run.dir, f"checkpoint_module3_{collector._frames}.pt")
                 torch.save(policy.state_dict(), ckpt_path)
+                torch.save(policy.actor[0].module, ckpt_module_path)
+                torch.save(policy.actor[0].module[0], ckpt_module_path2)
+                torch.save(policy.actor.module[0].module.state_dict(), ckpt_module_path3)
                 logging.info(f"Saved checkpoint to {str(ckpt_path)}")
             except AttributeError:
                 logging.warning(f"Policy {policy} does not implement `.state_dict()`")

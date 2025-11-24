@@ -6,15 +6,15 @@ defaults:
   - /base/sim_base@_here_
 
 env:
-  num_envs: 100
+  num_envs: 256
 
 drone_model: Crazyflie
 force_sensor: false
 time_encoding: false
 
-reward_effort_weight: 0.1
-reward_action_smoothness_weight: 0.0
-reward_motion_smoothness_weight: 0.0
+reward_effort_weight: 0.5
+reward_action_smoothness_weight: 0.5
+reward_motion_smoothness_weight: 0.5
 reward_distance_scale: 1.2
 
 #ravel_obs: true

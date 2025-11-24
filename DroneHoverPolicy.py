@@ -64,3 +64,6 @@ class DroneHoverPolicy:
         action, _ = self.policy(obs.to(self.device))
 
         return action
+    
+if __name__ == "__main__":
+    policy = DroneHoverPolicy("./temp.pt")
