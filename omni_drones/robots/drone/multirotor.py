@@ -87,6 +87,7 @@ class MultirotorBase(RobotBase):
         else:
             self.use_force_sensor = False
             state_dim = 19 + self.num_rotors
+        state_dim -= 4 # remove prev throttle dims
         self.state_spec = UnboundedContinuousTensorSpec(state_dim, device=self.device)
         self.randomization = defaultdict(dict)
 
@@ -149,6 +150,9 @@ class MultirotorBase(RobotBase):
         self.KM = self.rotor_params["KM"]
         self.throttle = self.rotor_params["throttle"]
         self.directions = self.rotor_params["directions"]
+
+        self.base_tau_up = 0.0125
+        self.base_tau_down = 0.0250
 
         self.thrusts = torch.zeros(*self.shape, self.num_rotors, 3, device=self.device)
         self.torques = torch.zeros(*self.shape, 3, device=self.device)
@@ -311,7 +315,7 @@ class MultirotorBase(RobotBase):
         # self.acc[:] = acc
         self.heading[:] = quat_axis(self.rot, axis=0)
         self.up[:] = quat_axis(self.rot, axis=2)
-        state = [self.pos, self.rot, self.vel, self.heading, self.up, self.throttle * 2 - 1]
+        state = [self.pos, self.rot, self.vel, self.heading, self.up]
         if self.use_force_sensor:
             self.force_readings, self.torque_readings = self.get_force_sensor_forces().chunk(2, -1)
             # normalize by mass and inertia
@@ -337,6 +341,29 @@ class MultirotorBase(RobotBase):
         self.torques[env_ids] = 0.0
         self.vel[env_ids] = 0.
         self.acc[env_ids] = 0.
+
+        num_resets = len(env_ids)
+        shape = (num_resets, 1)
+        # scales_up = (0.8 + torch.rand(shape, device=self.device) * 1.2)
+        # scales_down = (0.8 + torch.rand(shape, device=self.device) * 1.2)
+
+        current_range = getattr(self, "current_tau_range", torch.tensor([1.0, 1.0], device=self.device))
+        current_min = current_range[0]
+        current_max = current_range[1]
+
+        scales_up = (torch.rand(shape, device=self.device) * (current_max - current_min)) + current_min
+        scales_down = (torch.rand(shape, device=self.device) * (current_max - current_min)) + current_min
+
+        new_tau_up = self.base_tau_up * scales_up
+        new_tau_down = self.base_tau_down * scales_down
+
+        final_tau_up = new_tau_up[:, :, None].expand(-1, -1, 4)
+        final_tau_down = new_tau_down[:, :, None].expand(-1, -1, 4)
+
+        self.rotor_params["tau_up"][env_ids] = final_tau_up
+        self.rotor_params["tau_down"][env_ids] = final_tau_down
+
+
         # self.jerk[env_ids] = 0.
         if train and "train" in self.randomization:
             self._randomize(env_ids, self.randomization["train"])

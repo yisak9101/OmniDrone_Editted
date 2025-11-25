@@ -7,21 +7,21 @@ defaults:
   # - /base/randomization_base@_here_
 # task.action_transform=rate
 env:
-  num_envs: 1000
+  num_envs: 300
   env_spacing: 10
-  max_episode_length: 600
+  max_episode_length: 2000
 
 drone_model: Crazyflie
 num_drones: 4
 force_sensor: false
-time_encoding: true
+time_encoding: false
 
 payload_mass_scale: [0.15, 0.25] # [0.15, 0.25] true mass = scale * (cf_mass * 4 - 0.001 * 4), max payload : 70% 37.851[g] (bar contain)
 
-reward_effort_weight: 0.0
+reward_effort_weight: 0.5
 reward_spin_weight: 0.8
 reward_swing_weight: 0.8
-reward_action_smoothness_weight: 0.0
+reward_action_smoothness_weight: 0.5
 reward_distance_scale: 1.2
 safe_distance: 0.5
 
