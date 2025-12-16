@@ -7,9 +7,9 @@ defaults:
   # - /base/randomization_base@_here_
 # task.action_transform=rate
 env:
-  num_envs: 300
+  num_envs: 200
   env_spacing: 10
-  max_episode_length: 2000
+  max_episode_length: 1000
 
 drone_model: Crazyflie
 num_drones: 4
@@ -28,4 +28,4 @@ safe_distance: 0.5
 ravel_obs: true
 flatten_state: true
 
-action_transform: rate # velocity, attitude, rate
+action_transform: position # velocity, attitude, rate

@@ -130,6 +130,7 @@ class TransportHover(IsaacEnv):
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
             torch.tensor([0., 0., 2.], device=self.device) * torch.pi
         )
+
         # self.payload_target_pos = torch.zeros((self.num_envs, 3), device=self.device)
         self.payload_target_pos = torch.tensor([0., 0., 1.5], device=self.device)
         self.payload_target_heading = torch.zeros(self.num_envs, 3, device=self.device)
@@ -468,8 +469,7 @@ class TransportHover(IsaacEnv):
 
         state = TensorDict({}, self.num_envs)
         state["payload"] = payload_state # [..., 1, 22]
-        state["drones"] = obs["obs_self"].squeeze(2) # [..., n, state_dim]
-
+        state["drones"] = torch.cat([self.drone_states, identity], dim=-1)
         self.pos_error = self.target_payload_rpose[..., :3].norm(dim=-1, keepdim=True)
         self.heading_alignment = torch.sum(
             self.payload_heading * self.payload_target_heading, dim=-1, keepdim=True

@@ -45,6 +45,9 @@ from torchrl.data import (
 from .env import AgentSpec
 from dataclasses import replace
 
+from ...controllers.Lee_ctrl import LeeController
+from ...controllers.traj_generation import DroneTrajectory
+
 
 def _transform_agent_spec(self: Transform, agent_spec: AgentSpec) -> AgentSpec:
     return agent_spec
@@ -248,7 +251,70 @@ class RateController(Transform):
         self.controller = controller
         self.action_key = action_key
         self.max_thrust = self.controller.max_thrusts.sum(-1)
-    
+
+    def transform_input_spec(self, input_spec: TensorSpec) -> TensorSpec:
+        action_spec = input_spec[("full_action_spec", *self.action_key)]
+        spec = UnboundedContinuousTensorSpec(action_spec.shape[:-1]+(4,), device=action_spec.device)
+        input_spec[("full_action_spec", *self.action_key)] = spec
+        return input_spec
+
+    def _inv_call(self, tensordict: TensorDictBase) -> TensorDictBase:
+        drone_state = tensordict[("info", "drone_state")][..., :13]
+        action = tensordict[self.action_key]
+        target_rate, target_thrust = action.split([3, 1], -1)
+        target_thrust = ((target_thrust + 1) / 2).clip(0.) * self.max_thrust
+        cmds = self.controller(
+            drone_state,
+            target_rate=target_rate * torch.pi,
+            target_thrust=target_thrust
+        )
+        torch.nan_to_num_(cmds, 0.)
+        tensordict.set(self.action_key, cmds)
+        return tensordict
+
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+
+class PositionController(RateController):
+    def __init__(
+        self,
+        cfg,
+        rotor_config,
+        controller,
+        action_key: str = ("agents", "action"),
+    ):
+        super().__init__(controller, action_key)
+        self.alpha = 0.9
+        self.cfg = cfg
+        self.dt = self.cfg.sim.dt
+        self.n_env = self.cfg.env.num_envs
+        self.n_drones = 4
+        self.device = cfg.sim.device
+        self.yaw = np.zeros((self.n_env, self.n_drones, 1))
+        self.max_delta_pos = 0.8333 * self.dt # 30 km/h -> 0.8333 m/s. 0.83
+
+        mass = rotor_config['mass']
+        thrust_map = [rotor_config['rotor_configuration']['force_constants'][0], 0, 0]
+        motor_omega_max = rotor_config['rotor_configuration']['max_rotation_velocities'][0]
+        motor_omega_min = 0
+        f_max = (
+            thrust_map[0] * motor_omega_max**2
+            + thrust_map[1] * motor_omega_max
+            + thrust_map[2]
+        ) * 4
+        f_min = (
+            thrust_map[0] * motor_omega_min**2
+            + thrust_map[1] * motor_omega_min
+            + thrust_map[2]
+        ) * 4
+        self.omega_max = [3.141592, 3.141592, 3.141592]
+        self.std = (f_max - f_min) / 2
+        self.mean = (f_max + f_min) / 2
+
+        self.ctrl = LeeController(mass, f_max, f_min, self.omega_max)
+        self.init = np.array([[[0.5, 0.24999934434890747, 2.599824905395508], [0.5, -0.25000065565109253, 2.599823474884033],[-0.5000000596046448, -0.25000065565109253, 2.599818229675293],[-0.5000000596046448, 0.24999934434890747, 2.5998196601867676]]])
+
+
     def transform_input_spec(self, input_spec: TensorSpec) -> TensorSpec:
         action_spec = input_spec[("full_action_spec", *self.action_key)]
         spec = UnboundedContinuousTensorSpec(action_spec.shape[:-1]+(3,), device=action_spec.device)
@@ -256,21 +322,37 @@ class RateController(Transform):
         return input_spec
 
     def _inv_call(self, tensordict: TensorDictBase) -> TensorDictBase:
-        drone_state = tensordict[("info", "drone_state")][..., :13]
-        action = tensordict[self.action_key]
-        _action = torch.zeros(action.shape[0], action.shape[1], 4, device=action.device)
-        _action[..., :2] = action[..., :2]
-        _action[..., 3] = action[..., 2]
-        target_rate, target_thrust = _action.split([3, 1], -1)
-        target_thrust = ((target_thrust + 1) / 2).clip(0.) * self.max_thrust
-        cmds = self.controller(
-            drone_state, 
-            target_rate=target_rate * torch.pi, 
-            target_thrust=target_thrust
-        )
-        torch.nan_to_num_(cmds, 0.)
-        tensordict.set(self.action_key, cmds)
-        return tensordict
+        action = torch.zeros(self.n_env, self.n_drones, 4, device=self.device)
+        state = tensordict['agents']['state']['drones']
+        pos = state[...,:3].cpu().numpy()
+        quat = state[..., 3:7].cpu().numpy()
+        vel = state[...,7:10].cpu().numpy()
+        omega = state[...,10:13].cpu().numpy() * 180 / np.pi
+        goal_pos_delta = tensordict['agents']['action'].cpu().numpy().clip(-1, 1) * self.max_delta_pos
+        goal_pos = pos + goal_pos_delta
+        goal_vel = np.zeros_like(pos)
+        goal_acc = np.zeros_like(pos)
+
+        for i in range(self.n_env):
+            for j in range(self.n_drones):
+                rot = R.from_quat(quat[i,j], scalar_first=True).as_matrix()
+                vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
+                cur_state = [pos[i,j], vel[i,j], vec_rot, omega[i,j]]
+                goal_state = [goal_pos[i,j], goal_vel[i,j], goal_acc[i,j], 0]
+                cmd, _ = self.ctrl.compute_control(cur_state, goal_state, type="norm_input")
+                cmd = cmd[0]
+                # action -> [f, omega]
+                # actual_f = cmd[0] # N - real_input
+                # omega = cmd[1:] # rad/s - real_input
+                actual_f = cmd[0]  # N - norm_input
+                target_omega = cmd[1:]  # rad/s - norm_input
+                action[i, j, 0] = target_omega[0].item()
+                action[i, j, 1] = target_omega[1].item()
+                action[i, j, 2] = target_omega[2].item()
+                action[i, j, 3] = actual_f.item()
+
+        tensordict.set(self.action_key, action)
+        return super()._inv_call(tensordict)
 
 
 class AttitudeController(Transform):

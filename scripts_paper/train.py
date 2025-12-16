@@ -13,10 +13,10 @@ import imageio
 from omni_drones import CONFIG_PATH, init_simulation_app
 from omni_drones.utils.torchrl import SyncDataCollector, AgentSpec, RenderCallback
 from omni_drones.utils.torchrl.transforms import (
-    FromMultiDiscreteAction, 
+    FromMultiDiscreteAction,
     FromDiscreteAction,
     ravel_composite,
-    History
+    History, PositionController
 )
 from omni_drones.utils.wandb import init_wandb
 from omni_drones.learning import (
@@ -154,6 +154,14 @@ def main(cfg):
             transform = RateController(controller)
             transforms.append(transform)
             cfg.algo.actor['bounded_action'] = True
+        elif action_transform == "position":
+            from omni_drones.controllers import RateController as _RateController
+            from omni_drones.utils.torchrl.transforms import RateController
+            controller = _RateController(9.81, base_env.drone.params).to(base_env.device)
+            max_thrust = controller.max_thrust()
+            transform = PositionController(cfg, base_env.drone.params, controller)
+            transforms.append(transform)
+            cfg.algo.actor['bounded_action'] = True
         elif not action_transform.lower() == "none":
             raise NotImplementedError(f"Unknown action transform: {action_transform}")
     
@@ -163,7 +171,7 @@ def main(cfg):
     agent_spec: AgentSpec = env.agent_spec["drone"]
     policy = algos[cfg.algo.name.lower()](cfg.algo, agent_spec=agent_spec, device="cuda")
 
-    policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone_Editted/checkpoint_a13e4f87.pt", weights_only=False))
+    # policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone_Editted/checkpoint_a13e4f87.pt", weights_only=False))
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
