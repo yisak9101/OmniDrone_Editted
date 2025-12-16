@@ -237,8 +237,8 @@ class Formation(IsaacEnv):
 
         # to default
         self.init_rpy_dist = D.Uniform(
-            torch.tensor([-.2, -.2, 0.], device=self.device) * torch.pi,
-            torch.tensor([0.2, 0.2, 2.], device=self.device) * torch.pi
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
+            torch.tensor([0., 0., 0.], device=self.device) * torch.pi
         )
         self.target_pos = self.target_pos.expand(self.num_envs, 1, 3)
         self.target_heading = torch.zeros(self.num_envs, 3, device=self.device)
@@ -280,8 +280,8 @@ class Formation(IsaacEnv):
         
         
         # self.formation_L = laplacian(self.formation)
-        init_position = torch.as_tensor([[1.0,1.0,1.0],[1.0,-1.0,1.0],[-1.0,1.0,1.0],[-1.0,-1.0,1.0]],device=self.device)
-        self.drone.spawn(init_position) 
+        init_position = torch.as_tensor([[0.5, 0.24999934434890747, 2.599824905395508], [0.5, -0.25000065565109253, 2.599823474884033],[-0.5000000596046448, -0.25000065565109253, 2.599818229675293],[-0.5000000596046448, 0.24999934434890747, 2.5998196601867676]],device=self.device)
+        self.drone.spawn(init_position)
 
         self.formation = torch.FloatTensor(np.zeros((self.num_envs,self.drone.n, 3))).to(self.device)
         self.formation = self.formation + self.target_pos 
@@ -475,6 +475,7 @@ class Formation(IsaacEnv):
         rpy = self.init_rpy_dist.sample((*env_ids.shape, self.drone.n))
         rot = euler_to_quaternion(rpy)
         vel = torch.zeros(len(env_ids), self.drone.n, 6, device=self.device)
+        pos = torch.as_tensor([[0.5, 0.24999934434890747, 2.599824905395508], [0.5, -0.25000065565109253, 2.599823474884033],[-0.5000000596046448, -0.25000065565109253, 2.599818229675293],[-0.5000000596046448, 0.24999934434890747, 2.5998196601867676]],device=self.device).unsqueeze(0)
         self.drone.set_world_poses(pos, rot, env_ids)
         self.drone.set_velocities(vel, env_ids)
 
@@ -504,7 +505,6 @@ class Formation(IsaacEnv):
     def _compute_state_and_obs(self):
         self.root_states = self.drone.get_state()
         pos = self.drone.pos
-        self.root_states[..., :3] = self.target_pos - pos
         self.info["drone_state"][:] = self.root_states[..., :13]
 
         obs_self = [self.root_states]

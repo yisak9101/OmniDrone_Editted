@@ -7,7 +7,7 @@ defaults:
   # - /base/randomization_base@_here_
 
 env: 
-  num_envs: 10
+  num_envs: 1
   max_episode_length: 500
   env_spacing: 60
 
@@ -21,4 +21,4 @@ formation: squre #hexagon # tetragon
 ravel_obs: true
 flatten_state: true
 
-action_transform: rate
+action_transform: position
