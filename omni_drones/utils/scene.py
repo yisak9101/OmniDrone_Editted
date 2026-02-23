@@ -75,101 +75,86 @@ def create_rope(
         translation = translation.tolist()
 
     stage = stage_utils.get_current_stage()
-    ropeXform = UsdGeom.Xform.Define(stage, xform_path)
-    ropeXform.AddTranslateOp().Set(Gf.Vec3f(*translation))
-    ropeXform.AddRotateXYZOp().Set(Gf.Vec3f(0, 90, 0))
-    link_radius = 0.02
-    joint_offset = link_length / 2 - link_length / 8
 
-    links = []
-    for i in range(num_links):
-        link_path = f"{xform_path}/seg_{i}"
-        location = (i * (link_length - link_length / 4), 0, 0)
+    # 1. Capsule (Bar) 생성
+    capsuleGeom = UsdGeom.Capsule.Define(stage, f"{prim_path}/Capsule")
+    capsuleGeom.CreateHeightAttr(length)
+    capsuleGeom.CreateRadiusAttr(0.005)
+    capsuleGeom.CreateAxisAttr("Z")
+    capsuleGeom.AddTranslateOp().Set(Gf.Vec3f(*translation))
+    capsuleGeom.AddOrientOp().Set(Gf.Quatf(1.0))
+    capsuleGeom.AddScaleOp().Set(Gf.Vec3f(1.0, 1.0, 1.0))
+    capsuleGeom.CreateDisplayColorAttr().Set([color])
 
-        capsuleGeom = UsdGeom.Capsule.Define(stage, link_path)
-        capsuleGeom.CreateHeightAttr(link_length / 2)
-        capsuleGeom.CreateRadiusAttr(link_radius)
-        capsuleGeom.CreateAxisAttr("X")
-        capsuleGeom.AddTranslateOp().Set(location)
-        capsuleGeom.AddOrientOp().Set(Gf.Quatf(1.0))
-        capsuleGeom.AddScaleOp().Set(Gf.Vec3f(1.0, 1.0, 1.0))
-        capsuleGeom.CreateDisplayColorAttr().Set([color])
+    # Physics 적용
+    UsdPhysics.RigidBodyAPI.Apply(capsuleGeom.GetPrim())
+    massAPI = UsdPhysics.MassAPI.Apply(capsuleGeom.GetPrim())
+    massAPI.CreateMassAttr().Set(mass)
 
-        UsdPhysics.RigidBodyAPI.Apply(capsuleGeom.GetPrim())
-        massAPI = UsdPhysics.MassAPI.Apply(capsuleGeom.GetPrim())
-        massAPI.CreateMassAttr().Set(0.01)
+    UsdPhysics.CollisionAPI.Apply(capsuleGeom.GetPrim())
+    prim: Usd.Prim = capsuleGeom.GetPrim()
+    prim.GetAttribute("physics:collisionEnabled").Set(enable_collision)
 
-        UsdPhysics.CollisionAPI.Apply(capsuleGeom.GetPrim())
-        physxCollisionAPI = PhysxSchema.PhysxCollisionAPI.Apply(capsuleGeom.GetPrim())
-        # physxCollisionAPI.CreateRestOffsetAttr().Set(0.0)
-        # physxCollisionAPI.CreateContactOffsetAttr().Set(0.02)
-        capsuleGeom.GetPrim().GetAttribute("physics:collisionEnabled")
-
-        if len(links) > 0:
-            # jointPath = f"{link_path}/joint_{i}"
-            # joint = UsdPhysics.Joint.Define(stage, jointPath)
-            # joint.CreateBody0Rel().SetTargets([links[-1].GetPath()])
-            # joint.CreateBody1Rel().SetTargets([link_path])
-
-            # joint.CreateLocalPos0Attr().Set(Gf.Vec3f(joint_offset, 0, 0))
-            # joint.CreateLocalRot0Attr().Set(Gf.Quatf(1.0))
-            # joint.CreateLocalPos1Attr().Set(Gf.Vec3f(-joint_offset, 0, 0))
-            # joint.CreateLocalRot1Attr().Set(Gf.Quatf(1.0))
-
-            # # locked DOF (lock - low is greater than high)
-            # d6Prim = joint.GetPrim()
-            # limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transX")
-            # limitAPI.CreateLowAttr(1.0)
-            # limitAPI.CreateHighAttr(-1.0)
-            # limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transY")
-            # limitAPI.CreateLowAttr(1.0)
-            # limitAPI.CreateHighAttr(-1.0)
-            # limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "transZ")
-            # limitAPI.CreateLowAttr(1.0)
-            # limitAPI.CreateHighAttr(-1.0)
-            # limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, "rotX")
-            # limitAPI.CreateLowAttr(1.0)
-            # limitAPI.CreateHighAttr(-1.0)
-
-            # # Moving DOF:
-            # dofs = ["rotY", "rotZ"]
-            # for d in dofs:
-            #     limitAPI = UsdPhysics.LimitAPI.Apply(d6Prim, d)
-            #     limitAPI.CreateLowAttr(-110)
-            #     limitAPI.CreateHighAttr(110)
-
-            #     # joint drives for rope dynamics:
-            #     driveAPI = UsdPhysics.DriveAPI.Apply(d6Prim, d)
-            #     driveAPI.CreateTypeAttr("force")
-            #     driveAPI.CreateDampingAttr(rope_damping)
-            #     driveAPI.CreateStiffnessAttr(rope_stiffness)
-            joint: Usd.Prim = script_utils.createJoint(
-                stage, "D6", links[-1], capsuleGeom.GetPrim()
-            )
-            joint.GetAttribute("physics:localPos0").Set((joint_offset, 0.0, 0.0))
-            joint.GetAttribute("physics:localPos1").Set((-joint_offset, 0.0, 0.0))
-            joint.GetAttribute("limit:rotY:physics:low").Set(-110)
-            joint.GetAttribute("limit:rotY:physics:high").Set(110)
-            joint.GetAttribute("limit:rotZ:physics:low").Set(-110)
-            joint.GetAttribute("limit:rotZ:physics:high").Set(110)
-            UsdPhysics.DriveAPI.Apply(joint, "rotY")
-            UsdPhysics.DriveAPI.Apply(joint, "rotZ")
-            joint.GetAttribute("drive:rotY:physics:damping").Set(rope_damping)
-            joint.GetAttribute("drive:rotY:physics:stiffness").Set(rope_stiffness)
-            joint.GetAttribute("drive:rotZ:physics:damping").Set(rope_damping)
-            joint.GetAttribute("drive:rotZ:physics:stiffness").Set(rope_stiffness)
-
-        links.append(capsuleGeom.GetPrim())
-
+    # 2. 하단 연결 (Payload <-> Bar)
     if from_prim is not None:
-        joint: Usd.Prim = script_utils.createJoint(stage, "Fixed", from_prim, links[-1])
-        # joint.GetAttribute('physics:excludeFromArticulation').Set(True)
+        # Sphere 위치: 막대 중심에서 길이 절반만큼 아래로
+        sphere_loc_z = translation[2] - (length / 2.0)
+        
+        sphere = prim_utils.create_prim(
+            f"{prim_path}/Sphere",
+            "Sphere",
+            translation=(0, 0, sphere_loc_z), 
+            attributes={"radius": 0.02},
+        )
+        UsdPhysics.RigidBodyAPI.Apply(sphere)
+        UsdPhysics.CollisionAPI.Apply(sphere)
+        sphere.GetAttribute("physics:collisionEnabled").Set(False)
+        
+        massAPIsphere = UsdPhysics.MassAPI.Apply(sphere.GetPrim())
+        massAPIsphere.CreateMassAttr().Set(0.0001)
 
+        # [Fixed] Bar <-> Sphere
+        fixed_joint = script_utils.createJoint(stage, "Fixed", prim, sphere)
+        # Bar의 맨 아래쪽 (로컬 좌표)
+        fixed_joint.GetAttribute("physics:localPos0").Set(Gf.Vec3f(0, 0, -length / 2.0))
+        fixed_joint.GetAttribute("physics:localPos1").Set(Gf.Vec3f(0, 0, 0))
+
+        # [D6] Payload <-> Sphere
+        d6_joint = script_utils.createJoint(stage, "D6", from_prim, sphere)
+        # Payload의 모서리 오프셋 (여기가 핵심이었습니다)
+        d6_joint.GetAttribute("physics:localPos0").Set(Gf.Vec3f(*from_offset))
+        d6_joint.GetAttribute("physics:localPos1").Set(Gf.Vec3f(0, 0, 0))
+
+        # Joint Limits
+        d6_joint.GetAttribute("limit:rotX:physics:low").Set(-120)
+        d6_joint.GetAttribute("limit:rotX:physics:high").Set(120)
+        d6_joint.GetAttribute("limit:rotY:physics:low").Set(-120)
+        d6_joint.GetAttribute("limit:rotY:physics:high").Set(120)
+        UsdPhysics.DriveAPI.Apply(d6_joint, "rotX")
+        UsdPhysics.DriveAPI.Apply(d6_joint, "rotY")
+        d6_joint.GetAttribute("drive:rotX:physics:damping").Set(0.0002)
+        d6_joint.GetAttribute("drive:rotY:physics:damping").Set(0.0002)
+
+    # 3. 상단 연결 (Bar <-> Drone)
     if to_prim is not None:
-        joint: Usd.Prim = script_utils.createJoint(stage, "Fixed", links[0], to_prim)
-        joint.GetAttribute("physics:excludeFromArticulation").Set(True)
+        joint_prim = script_utils.createJoint(stage, "D6", prim, to_prim)
+        
+        # [핵심 수정 사항]
+        # Bar의 맨 위쪽 (로컬 좌표): translation을 더하지 않고 length/2 만 사용
+        joint_prim.GetAttribute("physics:localPos0").Set(Gf.Vec3f(0, 0, length / 2.0))
+        # Drone의 중심
+        joint_prim.GetAttribute("physics:localPos1").Set(Gf.Vec3f(0, 0, 0))
 
-    return links
+        joint_prim.GetAttribute("limit:rotX:physics:low").Set(-120)
+        joint_prim.GetAttribute("limit:rotX:physics:high").Set(120)
+        joint_prim.GetAttribute("limit:rotY:physics:low").Set(-120)
+        joint_prim.GetAttribute("limit:rotY:physics:high").Set(120)
+        UsdPhysics.DriveAPI.Apply(joint_prim, "rotX")
+        UsdPhysics.DriveAPI.Apply(joint_prim, "rotY")
+        joint_prim.GetAttribute("drive:rotX:physics:damping").Set(0.0002)
+        joint_prim.GetAttribute("drive:rotY:physics:damping").Set(0.0002)
+
+    return prim
 
 
 def create_bar(
@@ -181,6 +166,7 @@ def create_bar(
     mass: float = 0.02,
     enable_collision=False,
     color=(0.4, 0.4, 0.2),
+    from_offset=None
 ):
     if isinstance(from_prim, str):
         from_prim = prim_utils.get_prim_at_path(from_prim)
@@ -230,8 +216,10 @@ def create_bar(
         joint.GetAttribute("limit:rotY:physics:high").Set(120)
         UsdPhysics.DriveAPI.Apply(joint, "rotX")
         UsdPhysics.DriveAPI.Apply(joint, "rotY")
-        joint.GetAttribute("drive:rotX:physics:damping").Set(0.0002)
-        joint.GetAttribute("drive:rotY:physics:damping").Set(0.0002)
+        UsdPhysics.DriveAPI.Apply(joint, "rotZ")
+        joint.GetAttribute("drive:rotX:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotY:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotZ:physics:damping").Set(0.002) # 값을 높게 설정
 
     if to_prim is not None:
         joint: Usd.Prim = script_utils.createJoint(stage, "D6", prim, to_prim)
@@ -241,8 +229,10 @@ def create_bar(
         joint.GetAttribute("limit:rotY:physics:high").Set(120)
         UsdPhysics.DriveAPI.Apply(joint, "rotX")
         UsdPhysics.DriveAPI.Apply(joint, "rotY")
-        joint.GetAttribute("drive:rotX:physics:damping").Set(0.0002)
-        joint.GetAttribute("drive:rotY:physics:damping").Set(0.0002)
+        UsdPhysics.DriveAPI.Apply(joint, "rotZ")
+        joint.GetAttribute("drive:rotX:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotY:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotZ:physics:damping").Set(0.002)
 
     return prim
 

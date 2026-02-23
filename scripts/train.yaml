@@ -9,11 +9,11 @@ headless: true
 sim: ${task.sim}
 env: ${task.env}
 
-total_frames: 150_000_000
+total_frames: 10_000_000_000
 max_iters: -1
-eval_interval: -1
-save_interval: -1
-seed: 0
+eval_interval: 10000
+save_interval: 10000
+seed: 1
 
 viewer:
   resolution: [960, 720]
@@ -32,6 +32,6 @@ wandb:
   tags: 
 
 defaults:
-  - task: Hover
-  - algo: ppo
+  - task: TransportHover
+  - algo: mappo
   - _self_

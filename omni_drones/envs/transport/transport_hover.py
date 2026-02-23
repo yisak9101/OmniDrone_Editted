@@ -22,6 +22,7 @@
 
 
 from omni_drones.utils.torch import euler_to_quaternion
+import numpy as np
 import torch
 import torch.distributions as D
 from omni.isaac.core.objects import DynamicCuboid
@@ -93,8 +94,10 @@ class TransportHover(IsaacEnv):
 
         super().__init__(cfg, headless)
 
+
         self.group.initialize()
         self.payload = self.group.payload_view
+
 
         if "drone" in self.randomization:
             self.drone.setup_randomization(self.randomization["drone"])
@@ -104,6 +107,18 @@ class TransportHover(IsaacEnv):
             reset_xform_properties=False
         )
         self.payload_target_visual.initialize()
+
+
+
+        self.bar1 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_0/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
+        self.bar1.initialize()
+        self.bar2 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_1/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
+        self.bar2.initialize()
+        self.bar3 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_2/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
+        self.bar3.initialize()
+        self.bar4 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_3/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
+        self.bar4.initialize()
+
 
         self.init_poses = self.group.get_world_poses(clone=True)
         self.init_velocities = torch.zeros_like(self.group.get_velocities())
@@ -122,9 +137,26 @@ class TransportHover(IsaacEnv):
             torch.as_tensor(payload_mass_scale[0] * self.drone.MASS_0.sum(), device=self.device),
             torch.as_tensor(payload_mass_scale[1] * self.drone.MASS_0.sum(), device=self.device)
         )
+
+        bar_mass_scale = self.cfg.task.bar_mass_scale
+        self.bar_mass_dist = D.Uniform(
+            torch.as_tensor(bar_mass_scale[0], device=self.device),
+            torch.as_tensor(bar_mass_scale[1], device=self.device)
+        )
+
+        self.damping_dist = D.Uniform(
+            torch.tensor([0.0001], device=self.device),
+            torch.tensor([0.01], device=self.device)
+        )
+        # self.damping_dist = D.Uniform(
+        #     torch.tensor([0.001], device=self.device),
+        #     torch.tensor([0.001], device=self.device)
+        # )
+        
+
         self.init_pos_dist = D.Uniform(
-            torch.tensor([-3., -3., 1.], device=self.device),
-            torch.tensor([3., 3., 2.5], device=self.device)
+            torch.tensor([-3., -3., 0.1], device=self.device),
+            torch.tensor([3., 3., 0.1], device=self.device)
         )
         self.init_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
@@ -142,20 +174,20 @@ class TransportHover(IsaacEnv):
         self.distance_margin = 0.1 * torch.ones((self.num_envs, 1), device=self.device)
         self.heading_distance_margin = 0.05 * torch.ones((self.num_envs, 1), device=self.device)
 
-        mass_scale_range = [0.8, 1.2]
+        mass_scale_range = [1.0, 1.0]
 
         # 2. 드론의 기본 질량(MASS_0)을 가져옵니다. (initialize()에서 이미 계산됨)
-        base_mass = self.drone.MASS_0
+        base_mass = self.drone.MASS_0[0]
 
         # 3. 질량의 최소/최대 범위를 계산합니다.
-        mass_low = base_mass * mass_scale_range[0]
-        mass_high = base_mass * mass_scale_range[1]
+        drone_mass_low = base_mass * mass_scale_range[0]
+        drone_mass_high = base_mass * mass_scale_range[1]
 
         # 4. 'train' 모드일 때 사용할 'mass' 분포를 생성합니다.
-        mass_distribution = D.Uniform(mass_low, mass_high)
+        self.drone_mass_distribution = D.Uniform(drone_mass_low, drone_mass_high)
 
         # 5. drone 객체의 비어있는 randomization 딕셔너리에 이 분포를 직접 삽입합니다.
-        self.drone.randomization["train"]["mass"] = mass_distribution
+        # self.drone.randomization["train"]["mass"] = mass_distribution
         #
         # logging.info(
         #     f"Manually injected mass randomization (train): "
@@ -217,6 +249,23 @@ class TransportHover(IsaacEnv):
             )
         self.frame_count = 0
 
+        self.takeoff_height = 0.5  # 이륙 목표 높이 (미터)
+        self.history_len = 10      # 기록할 프레임 수
+        self.success_threshold = 7 # 성공 판정 프레임 수
+        
+        # (num_envs, 10) 크기의 False로 채워진 버퍼 생성
+        self.takeoff_history = torch.zeros(
+            self.num_envs, self.history_len, dtype=torch.bool, device=self.device
+        )
+        
+        # 각 환경별로 RL 제어가 시작되었는지 확인하는 플래그
+        self.is_rl_control = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        # 이륙 시 사용할 고정 액션 (Thrust만 주고, 회전은 0으로)
+        # 예: [Thrust, Roll, Pitch, Yaw] -> [0.6, 0, 0, 0]
+        self.takeoff_action_value = torch.tensor([0.6, 0.6, 0.6, 0.6], device=self.device)
+        
+
     def _design_scene(self):
         drone_model = MultirotorBase.REGISTRY[self.cfg.task.drone_model]
         cfg = drone_model.cfg_cls(force_sensor=self.cfg.task.force_sensor)
@@ -246,7 +295,7 @@ class TransportHover(IsaacEnv):
             disable_gravity=True
         )
 
-        self.group.spawn(translations=[(0, 0, 1.)], enable_collision=False)
+        self.group.spawn(translations=[(0, 0, 0.)], enable_collision=False)
         return ["/World/defaultGroundPlane"]
 
     def _set_specs(self):
@@ -324,6 +373,21 @@ class TransportHover(IsaacEnv):
         self.group.set_joint_positions(self.init_joint_pos[env_ids], env_ids)
         self.group.set_joint_velocities(self.init_joint_vel[env_ids], env_ids)
 
+        num_bar_dofs = 16
+        bar_dof_indices = torch.arange(num_bar_dofs, device=self.device)
+
+        random_damping = self.damping_dist.sample((len(env_ids), ))
+
+        k_ds = random_damping.repeat(1, num_bar_dofs)
+
+        k_ps = torch.zeros_like(k_ds)
+
+        self.group._view.set_gains(
+            kds=k_ds, 
+            indices=env_ids, 
+            joint_indices=bar_dof_indices
+        )
+
         payload_target_rpy = self.payload_target_rpy_dist.sample(env_ids.shape)
         payload_target_rot = euler_to_quaternion(payload_target_rpy)
         payload_target_heading = quat_axis(payload_target_rot, 0)
@@ -332,12 +396,46 @@ class TransportHover(IsaacEnv):
         self.payload_target_heading[env_ids] = payload_target_heading
 
         self.payload.set_masses(payload_masses, env_ids)
+
+        
+
+        bar_masses = self.bar_mass_dist.sample(env_ids.shape)
+        self.bar1.set_masses(bar_masses, env_ids)
+        self.bar2.set_masses(bar_masses, env_ids)
+        self.bar3.set_masses(bar_masses, env_ids)
+        self.bar4.set_masses(bar_masses, env_ids)
+
+
+        # import pdb;pdb.set_trace()
+        # test = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_0/bar",reset_xform_properties=False)
+        # test.set_masses_bar(np.array([0.0003]), env_ids)
+        
+        
+        
         self.payload_target_visual.set_world_poses(
             orientations=payload_target_rot,
             env_indices=env_ids
         )
 
+
+
         self.info["payload_mass"][env_ids] = payload_masses.unsqueeze(-1).clone()
+
+
+        random_drone_mass = self.drone_mass_distribution.sample((len(env_ids),))
+
+        expanded_masses = random_drone_mass.expand(-1, self.drone.n)
+
+        mass_data_for_view = expanded_masses.unsqueeze(-1)
+
+        self.drone.base_link.set_masses(mass_data_for_view, env_indices=env_ids)
+
+        self.drone.masses[env_ids] = mass_data_for_view
+
+        self.drone.gravity[env_ids] = self.drone.masses[env_ids] * 9.81
+        self.drone.intrinsics["mass"][env_ids] = (self.drone.masses[env_ids] / self.drone.MASS_0)
+
+
         self.stats[env_ids] = 0.
         distance = torch.cat([
             self.payload_target_pos-pos,
@@ -376,6 +474,59 @@ class TransportHover(IsaacEnv):
             # 3. 이 환경들의 버퍼 인덱스를 0으로 리셋
             self.buffer_idx[env_ids] = 0
 
+
+            # 해당 환경들의 RL 제어 플래그를 False로 내림
+        self.is_rl_control[env_ids] = False
+        
+        # 해당 환경들의 높이 기록을 모두 False(실패)로 초기화
+        self.takeoff_history[env_ids] = False
+
+        # # 1. 리셋할 환경의 개수 파악
+        # num_resets = len(env_ids)
+
+        # # 2. 리셋 대상 드론들의 현재 위치만 딱 가져오기
+        # # get_world_poses는 전체 환경 데이터를 줍니다. 따라서 [env_ids]로 슬라이싱 해야 합니다.
+        # all_drone_pos, _ = self.drone.get_world_poses(clone=True) 
+        # reset_drone_pos = all_drone_pos[env_ids] # Shape: (num_resets, 4, 3)
+
+        # # 3. 초기화할 회전값 (Identity Quaternion: w, x, y, z = 1, 0, 0, 0)
+        # # View의 shape=(-1, 1) 설정에 맞추기 위해 (N, 1, 4) 형태로 만듭니다.
+        # identity_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device)
+        # identity_rot = identity_rot.repeat(num_resets, 1).unsqueeze(1) # (num_resets, 1, 4)
+
+        # # 4. 초기화할 속도값 (0으로 설정)
+        # # 위치만 옮기고 속도를 안 죽이면, 이전의 회전 관성이 남아서 바로 돕니다.
+        # zero_vel = torch.zeros((num_resets, 1, 6), device=self.device) # (num_resets, 1, 6)
+
+        # # 5. 막대 오프셋 (드론 중심에서 막대 중심까지의 거리)
+        # # create_bar에서 계산했던 'bar_center_z' 값을 사용해야 정확합니다.
+        # # 만약 create_bar에서 bar_center_z = -0.425 였다면:
+        # bar_z_offset = -0.425 
+        # offset_vec = torch.tensor([0, 0, bar_z_offset], device=self.device)
+
+        # # 6. 각 막대(Bar1 ~ Bar4)를 순회하며 리셋
+        # # self.bar1, self.bar2 ... 는 각각 __init__에서 shape=(-1, 1)로 선언되었다고 가정합니다.
+        # bars = [self.bar1, self.bar2, self.bar3, self.bar4]
+        
+        # for i, bar_view in enumerate(bars):
+        #     # i번째 드론의 위치 (N, 3)
+        #     current_drone_pos = reset_drone_pos[:, i, :]
+            
+        #     # 막대가 가야 할 목표 위치 계산
+        #     target_pos = current_drone_pos + offset_vec
+            
+        #     # Shape 맞추기: (N, 3) -> (N, 1, 3)
+        #     # RigidPrimView가 shape=(-1, 1)이므로 차원을 하나 늘려줘야 Shape Error가 안 납니다.
+        #     target_pos = target_pos.unsqueeze(1)
+
+        #     # [핵심] set_world_poses 호출
+        #     # 이미 target_pos, identity_rot를 'num_resets' 크기로 만들었으므로
+        #     # 여기서 [env_ids]로 또 슬라이싱하면 안 됩니다! 그대로 넘깁니다.
+        #     bar_view.set_world_poses(target_pos, identity_rot, env_indices=env_ids)
+            
+        #     # [핵심] 속도 0으로 초기화 (매우 중요)
+        #     bar_view.set_velocities(zero_vel, env_indices=env_ids)
+
     def _pre_sim_step(self, tensordict: TensorDictBase):
         # PPO가 생성한 새로운 액션
         new_actions = tensordict[("agents", "action")]
@@ -409,7 +560,32 @@ class TransportHover(IsaacEnv):
 
         # 7. '지연된 액션'을 시뮬레이터에 적용
 
-        if self.tau_curriculum_enabled and self.training:
+        reset_warmup_mask = self.progress_buf < 5 
+        warmup_env_ids = torch.nonzero(reset_warmup_mask).squeeze(-1)
+
+        if len(warmup_env_ids) > 0:
+            # A. Root(드론) 속도 0으로 강제 (Warning 안 뜨는 Root 제어)
+            # 반복 호출하여 Payload가 드론을 끌고 가려는 힘을 억제합니다.
+            root_vels = torch.zeros((len(warmup_env_ids), 6), device=self.device)
+            self.group.set_velocities(root_vels, env_indices=warmup_env_ids)
+
+            # B. 관절(Joint) 속도 0으로 강제
+            # D6Joint가 흔들리려는 것을 5프레임 동안 꽉 잡습니다.
+            # self.init_joint_vel은 0 텐서라고 하셨으므로 그대로 사용하거나 새로 생성
+            zero_joint_vel = torch.zeros_like(self.init_joint_vel[warmup_env_ids])
+            self.group.set_joint_velocities(zero_joint_vel, env_indices=warmup_env_ids)
+            
+            # C. 액션 덮어쓰기 (Hovering 힘만 주고 나머지는 0)
+            # 이륙 액션을 주되, 회전 등을 하지 않도록 합니다.
+            # action_to_apply를 수정하여 이 환경들에 대해서는 'Takeoff Action'을 강제합니다.
+            
+            # warmup 중인 환경의 액션을 takeoff_action으로 교체
+            takeoff_val = self.takeoff_action_value.expand_as(action_to_apply)
+            
+            # (N, n_drones, action_dim) 형태 맞춤
+            action_to_apply[warmup_env_ids] = takeoff_val[warmup_env_ids]
+
+        if self.tau_curriculum_enabled:
             # IsaacEnv의 전체 학습 스텝 수(self.frame_count)를 사용합니다.
             # 0.0 ~ 1.0 사이의 진행률을 계산합니다.
             progress = (self.frame_count / self.tau_curriculum_total_steps)
@@ -421,7 +597,50 @@ class TransportHover(IsaacEnv):
 
             # 계산된 '현재 범위'를 drone 객체에 업데이트해줍니다.
             self.drone.current_tau_range = current_range
-        self.effort = self.drone.apply_action(action_to_apply)
+
+        # 1. 현재 높이 측정 (Payload 기준 or 드론 평균 기준)
+        # 여기서는 Payload의 높이를 기준으로 합니다. (페이로드가 뜨면 성공)
+        # self.payload.get_world_poses()는 비용이 있으므로, get_state()에서 갱신된 값을 쓰거나 새로 호출
+        payload_pos, _ = self.get_env_poses(self.payload.get_world_poses())
+        current_heights = payload_pos[..., 2].squeeze(-1) # (num_envs,)
+        
+        # 만약 드론 높이를 기준으로 하고 싶다면 아래 주석 해제
+        # drone_pos, _ = self.drone.get_world_poses(True)
+        # current_heights = drone_pos[..., 2].mean(dim=1) # 드론들의 평균 높이
+
+        # 2. 이번 프레임의 성공 여부 (True/False)
+        is_above_threshold = current_heights > self.takeoff_height
+
+        # 3. History Buffer 업데이트 (Rolling)
+        # 왼쪽으로 1칸 밀고, 맨 마지막 칸에 현재 상태 저장
+        self.takeoff_history = torch.roll(self.takeoff_history, shifts=-1, dims=1)
+        self.takeoff_history[:, -1] = is_above_threshold
+
+        # 4. 조건 확인: 최근 10개 중 7개 이상 True인가?
+        success_counts = self.takeoff_history.sum(dim=1)
+        should_start_rl = success_counts >= self.success_threshold
+
+        # 5. 상태 래치 (Latch): 한 번 RL 제어가 켜지면(True), 리셋 전까지 계속 True 유지
+        self.is_rl_control = self.is_rl_control | should_start_rl
+
+        # 6. 액션 선택 (RL 액션 vs Takeoff 액션)
+        # takeoff_action을 현재 action_to_apply와 같은 모양으로 확장
+
+        takeoff_env_ids = torch.nonzero(~self.is_rl_control).squeeze(-1)
+
+        if len(takeoff_env_ids) > 0:
+            pass
+
+        takeoff_action = self.takeoff_action_value.expand_as(action_to_apply)
+
+        # is_rl_control이 True인 곳은 RL 액션, False인 곳은 Takeoff 액션 사용
+        # unsqueeze를 통해 차원을 맞춰줍니다. (num_envs, 1, 1) or (num_envs, n_drones, 1)
+        mask = self.is_rl_control.unsqueeze(-1).unsqueeze(-1)
+        
+        final_action = torch.where(mask, action_to_apply, takeoff_action)
+        
+        # 7. 최종 액션 적용
+        self.effort = self.drone.apply_action(final_action)
 
     def _compute_state_and_obs(self):
         self.drone_states = self.drone.get_state()

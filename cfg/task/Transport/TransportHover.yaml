@@ -5,7 +5,7 @@ defaults:
   - /base/env_base@_here_
   - /base/sim_base@_here_
   # - /base/randomization_base@_here_
-# task.action_transform=rate
+
 env:
   num_envs: 300
   env_spacing: 10
@@ -16,16 +16,18 @@ num_drones: 4
 force_sensor: false
 time_encoding: false
 
-payload_mass_scale: [0.15, 0.25] # [0.15, 0.25] true mass = scale * (cf_mass * 4 - 0.001 * 4), max payload : 70% 37.851[g] (bar contain)
+payload_mass_scale: [0.15, 0.25]
+
+bar_mass_scale: [0.0005, 0.0015]
 
 reward_effort_weight: 0.5
-reward_spin_weight: 0.8
+reward_spin_weight: 1.0
 reward_swing_weight: 0.8
 reward_action_smoothness_weight: 0.5
 reward_distance_scale: 1.2
-safe_distance: 0.5
+safe_distance: 0.4
 
 ravel_obs: true
 flatten_state: true
 
-action_transform: rate # velocity, attitude, rate
+action_transform: rate

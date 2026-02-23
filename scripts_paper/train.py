@@ -163,7 +163,7 @@ def main(cfg):
     agent_spec: AgentSpec = env.agent_spec["drone"]
     policy = algos[cfg.algo.name.lower()](cfg.algo, agent_spec=agent_spec, device="cuda")
 
-    policy.load_state_dict(torch.load("/home/mlic/Repo/OmniDrone_Editted/checkpoint_a13e4f87.pt", weights_only=False))
+    policy.load_state_dict(torch.load("./checkpoint_BAR_PAYLOAD.pt", weights_only=False))
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -258,7 +258,7 @@ def main(cfg):
             format="mp4"
         )
         frames = np.moveaxis(frames, 1, -1)
-        imageio.mimsave("/home/mlic/Repo/OmniDrone_Editted/video.mp4", frames, fps=0.5 / cfg.sim.dt)
+        imageio.mimsave("./video.mp4", frames, fps=0.5 / cfg.sim.dt)
         return info
     # evaluate()
 

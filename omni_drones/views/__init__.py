@@ -563,6 +563,7 @@ class RigidPrimView(_RigidPrimView):
                 self._mass_apis[i.tolist()].GetMassAttr().Set(masses[read_idx].tolist())
                 read_idx += 1
             return
+        
 
     def get_coms(
         self, 
