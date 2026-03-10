@@ -43,6 +43,10 @@ from .utils import TransportationGroup, TransportationCfg
 import pdb
 import logging
 
+from ...controllers.drone_trajectory import DroneTrajectory
+from scipy.spatial.transform import Rotation as R
+
+
 class TransportHover(IsaacEnv):
     r"""
     A cooperative control task where a group of UAVs carry a box-shaped payload connected via
@@ -358,6 +362,9 @@ class TransportHover(IsaacEnv):
         self.observation_spec["stats"] = stats_spec
         self.info = info_spec.zero()
         self.stats = stats_spec.zero()
+
+    def _set_ctrl(self, ctrl):
+        self.ctrl = ctrl
     
     def _reset_idx(self, env_ids: torch.Tensor):
         pos = self.init_pos_dist.sample(env_ids.shape)
@@ -620,6 +627,27 @@ class TransportHover(IsaacEnv):
         success_counts = self.takeoff_history.sum(dim=1)
         should_start_rl = success_counts >= self.success_threshold
 
+        state = tensordict['agents']['state']['drones'].cpu().numpy()
+        pos = state[...,:3]
+        quat = state[..., 3:7]
+        vel = state[...,7:10]
+        omega = state[...,10:13] * 180 / np.pi
+
+        if should_start_rl:
+            self.traj = [None] * self.drone.n
+            self.traj_step = 0
+            for i in range(self.drone.n):
+                start_state = [pos[0,i], vel[0,i], omega[0,i], 0]
+
+                pf = pos[0,i] + 2
+                vf = np.array([0, 0, 0])
+                af = np.array([0, 0, 0])
+                yawf = 0
+                goal_state =[pf, vf, af, yawf]
+
+                duration = 5
+                self.traj[i] = DroneTrajectory(start_state, goal_state, t0=0, tf=duration/self.cfg.task.sim.dt*100)
+
         # 5. 상태 래치 (Latch): 한 번 RL 제어가 켜지면(True), 리셋 전까지 계속 True 유지
         self.is_rl_control = self.is_rl_control | should_start_rl
 
@@ -636,7 +664,34 @@ class TransportHover(IsaacEnv):
         # is_rl_control이 True인 곳은 RL 액션, False인 곳은 Takeoff 액션 사용
         # unsqueeze를 통해 차원을 맞춰줍니다. (num_envs, 1, 1) or (num_envs, n_drones, 1)
         mask = self.is_rl_control.unsqueeze(-1).unsqueeze(-1)
-        
+
+        if self.is_rl_control:
+            for i in range(self.drone.n):
+                rot = R.from_quat(quat[0,i], scalar_first=True).as_matrix()
+                vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
+                cur_state = [pos[0,i], vel[0,i], vec_rot, omega[0,i]]
+                p_d, v_d, a_d, yaw_d = self.traj[i].get_trajectory(self.traj_step, rotation=False)
+                des_state = [p_d, v_d, a_d, yaw_d]
+                cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
+                cmd = cmd[0]
+                # action -> [f, omega]
+                # actual_f = cmd[0] # N - real_input
+                # omega = cmd[1:] # rad/s - real_input
+                actual_f = cmd[0]  # N - norm_input
+                target_omega = cmd[1:]  # rad/s - norm_input
+                action_to_apply[0, i, 0] = target_omega[0].item()
+                action_to_apply[0, i, 1] = target_omega[1].item()
+                action_to_apply[0, i, 2] = target_omega[2].item()
+                action_to_apply[0, i, 3] = actual_f.item()
+            self.traj_step += 1
+
+            # drone_traj = DroneTrajectory(
+            #     self.trajectory_start_state[prefix],
+            #     goal_state,
+            #     0,
+            #     duration,
+            # )
+
         final_action = torch.where(mask, action_to_apply, takeoff_action)
         
         # 7. 최종 액션 적용
@@ -687,7 +742,7 @@ class TransportHover(IsaacEnv):
 
         state = TensorDict({}, self.num_envs)
         state["payload"] = payload_state # [..., 1, 22]
-        state["drones"] = obs["obs_self"].squeeze(2) # [..., n, state_dim]
+        state["drones"] = torch.cat([self.drone_states, identity], dim=-1)
 
         self.pos_error = self.target_payload_rpose[..., :3].norm(dim=-1, keepdim=True)
         self.heading_alignment = torch.sum(

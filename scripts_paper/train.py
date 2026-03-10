@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 import imageio
 
 from omni_drones import CONFIG_PATH, init_simulation_app
+from omni_drones.controllers.lee_controller import LeeController
 from omni_drones.utils.torchrl import SyncDataCollector, AgentSpec, RenderCallback
 from omni_drones.utils.torchrl.transforms import (
     FromMultiDiscreteAction, 
@@ -107,6 +108,8 @@ def main(cfg):
     env_class = IsaacEnv.REGISTRY[cfg.task.name]
     base_env = env_class(cfg, headless=cfg.headless)
 
+    lee_ctrl = LeeController(base_env.drone.params)
+
     stats_keys = [
         k for k in base_env.observation_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
@@ -160,10 +163,12 @@ def main(cfg):
     env = TransformedEnv(base_env, Compose(*transforms)).train()
     env.set_seed(cfg.seed)
 
+    env._set_ctrl(lee_ctrl)
+
     agent_spec: AgentSpec = env.agent_spec["drone"]
     policy = algos[cfg.algo.name.lower()](cfg.algo, agent_spec=agent_spec, device="cuda")
 
-    policy.load_state_dict(torch.load("./checkpoint_BAR_PAYLOAD.pt", weights_only=False))
+    # policy.load_state_dict(torch.load("./checkpoint_BAR_PAYLOAD.pt", weights_only=False))
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
