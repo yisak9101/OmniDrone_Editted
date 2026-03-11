@@ -221,7 +221,7 @@ class MAPPOPolicy(object):
             self.trajs = [None] * 4
             tensordict['agents']['action'] = torch.zeros(1, 4, 4, device=self.device)
             self.last_time = 0
-            self.goal = p + 0.5
+            self.goal = p
             return tensordict
 
         if self.trajs[0] is None or time > self.last_time:
@@ -240,8 +240,8 @@ class MAPPOPolicy(object):
             cur_state = [p[i], v[i], vec_rot]
             des_state = [p_d, v_d, a_d, yaw_d]
 
-            max_pos_err_xy = 0.5  # 현재 위치 기준 허용 오차 [m]
-            max_vel_xy = 0.5  # 목표 속도 제한 [m/s]
+            max_pos_err_xy = 0.01  # 현재 위치 기준 허용 오차 [m]
+            max_vel_xy = 0.01  # 목표 속도 제한 [m/s]
 
             p_d_clamped = p_d.copy()
             v_d_clamped = v_d.copy()
