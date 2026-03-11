@@ -111,6 +111,8 @@ class MAPPOPolicy(object):
         self.max_t = 1000
         self.trajs = [None] * 4
         self.ctrl = LeeController(0.035, 0.6685, 0, [4, 4, 2])
+        self.last_time = 0
+        self.goal = None
 
     @property
     def act_logps_name(self):
@@ -208,22 +210,24 @@ class MAPPOPolicy(object):
 
     def __call__(self, tensordict: TensorDict, deterministic: bool = False):
         state = tensordict['info']['drone_state']
-        t = tensordict['agents','state','payload'][0,0,-1].item() * self.max_t
-
-        if t < 5:
-            self.trajs = [None] * 4
-            tensordict['agents']['action'] = torch.zeros(1, 4, 4, device=self.device)
-            return tensordict
-
-        t = t * 0.01
+        timesteps = tensordict['agents','state','payload'][0,0,-1].item() * self.max_t
+        time = timesteps * 0.01
         p = state[0,:,:3].cpu().numpy()
         quat = state[0,:,3:7]
         v = state[0,:,7:10].cpu().numpy()
 
-        if self.trajs[0] is None:
+        if timesteps < 5:
+            # right after reset
+            self.trajs = [None] * 4
+            tensordict['agents']['action'] = torch.zeros(1, 4, 4, device=self.device)
+            self.last_time = 0
+            self.goal = p + 0.5
+            return tensordict
+
+        if self.trajs[0] is None or time > self.last_time:
+            self.last_time += 2
             for i in range(4):
-                goal = p[i] + 0.5
-                self.trajs[i] = DroneTrajectory([p[i], np.zeros(3), np.zeros(3), 0], [goal, np.zeros(3), np.zeros(3), 0], t, 5)
+                self.trajs[i] = DroneTrajectory([p[i], np.zeros(3), np.zeros(3), 0], [self.goal[i], np.zeros(3), np.zeros(3), 0], time, self.last_time)
 
         tensordict['agents']['action'] = torch.zeros(1,4,4, device=self.device)
 
@@ -232,11 +236,29 @@ class MAPPOPolicy(object):
             yaw = quaternion_to_euler(quat[i])[..., -1]
             vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
 
-            p_d, v_d, a_d, yaw_d = self.trajs[i].get_trajectory(t, rotation=False)
+            p_d, v_d, a_d, yaw_d = self.trajs[i].get_trajectory(time, rotation=False)
             cur_state = [p[i], v[i], vec_rot]
             des_state = [p_d, v_d, a_d, yaw_d]
 
-            cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
+            max_pos_err_xy = 0.5  # 현재 위치 기준 허용 오차 [m]
+            max_vel_xy = 0.5  # 목표 속도 제한 [m/s]
+
+            p_d_clamped = p_d.copy()
+            v_d_clamped = v_d.copy()
+
+            # position clamp
+            pos_err_xy = p_d[:2] - p[i, :2]
+            pos_err_xy = np.clip(pos_err_xy, -max_pos_err_xy, max_pos_err_xy)
+            p_d_clamped[:2] = p[i, :2] + pos_err_xy
+
+            # velocity clamp
+            vel_err_xy = v_d[:2] - v[i, :2]
+            vel_err_xy = np.clip(vel_err_xy, -max_vel_xy, max_vel_xy)
+            v_d_clamped[:2] = v[i, :2] + vel_err_xy
+
+            fixed_des_state = [p_d_clamped, v_d_clamped, a_d, yaw_d]
+
+            cmd, _ = self.ctrl.compute_control(cur_state, fixed_des_state, type="norm_input")
             thrust = cmd[..., 0]
             omega = cmd[..., 1:4]
 
