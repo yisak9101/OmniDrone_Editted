@@ -237,8 +237,8 @@ class MAPPOPolicy(object):
             yaw = quaternion_to_euler(quat[i])[..., -1]
             vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
 
-            p_d = payload_p + self.offset[i]
-            p_d[..., 2] += 5
+            p_d = p[i]
+            p_d[..., 2] = payload_p[2] + 5
 
             if 50 <= timestep < 55:
                 p_d += self.addition
