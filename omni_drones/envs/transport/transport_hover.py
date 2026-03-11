@@ -118,8 +118,8 @@ class TransportHover(IsaacEnv):
             torch.as_tensor(payload_mass_scale[1] * self.drone.MASS_0.sum(), device=self.device)
         )
         self.init_pos_dist = D.Uniform(
-            torch.tensor([5., 5., 2.5], device=self.device),
-            torch.tensor([5., 5., 2.5], device=self.device)
+            torch.tensor([0., 0., 2.5], device=self.device),
+            torch.tensor([0., 0., 2.5], device=self.device)
         )
         self.init_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,

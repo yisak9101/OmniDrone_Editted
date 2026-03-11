@@ -23,6 +23,7 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -45,6 +46,9 @@ from omni_drones.utils.torchrl.env import AgentSpec
 
 from .utils import valuenorm
 from .utils.gae import compute_gae
+from ..controllers.Lee_ctrl import LeeController
+from ..controllers.Trajectory import DroneTrajectory
+from ..utils.torch import quaternion_to_rotation_matrix, quaternion_to_euler
 
 LR_SCHEDULER = lr_scheduler._LRScheduler
 
@@ -104,6 +108,9 @@ class MAPPOPolicy(object):
         )
 
         self.n_updates = 0
+        self.max_t = 1000
+        self.trajs = [None] * 4
+        self.ctrl = LeeController(0.035, 0.6685, 0, [4, 4, 2])
 
     @property
     def act_logps_name(self):
@@ -200,13 +207,49 @@ class MAPPOPolicy(object):
         return tensordict
 
     def __call__(self, tensordict: TensorDict, deterministic: bool = False):
+        state = tensordict['info']['drone_state']
+        t = tensordict['agents','state','payload'][0,0,-1].item() * self.max_t
+
+        if t < 5:
+            self.trajs = [None] * 4
+            tensordict['agents']['action'] = torch.zeros(1, 4, 4, device=self.device)
+            return tensordict
+
+        t = t * 0.01
+        p = state[0,:,:3].cpu().numpy()
+        quat = state[0,:,3:7]
+        v = state[0,:,7:10].cpu().numpy()
+
+        if self.trajs[0] is None:
+            for i in range(4):
+                goal = p[i] + 0.5
+                self.trajs[i] = DroneTrajectory([p[i], np.zeros(3), np.zeros(3), 0], [goal, np.zeros(3), np.zeros(3), 0], t, 5)
+
+        tensordict['agents']['action'] = torch.zeros(1,4,4, device=self.device)
+
+        for i in range(4):
+            rot = quaternion_to_rotation_matrix(quat[i]).cpu().numpy()
+            yaw = quaternion_to_euler(quat[i])[..., -1]
+            vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
+
+            p_d, v_d, a_d, yaw_d = self.trajs[i].get_trajectory(t, rotation=False)
+            cur_state = [p[i], v[i], vec_rot]
+            des_state = [p_d, v_d, a_d, yaw_d]
+
+            cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
+            thrust = cmd[..., 0]
+            omega = cmd[..., 1:4]
+
+            tensordict['agents']['action'][..., 0:3] = torch.tensor(omega/ np.pi, device='cuda')
+            tensordict['agents']['action'][..., 3] = torch.tensor(thrust / 0.6685, device='cuda')
+
         actor_input = tensordict.select(*self.actor_in_keys, strict=False)
         actor_input.batch_size = [*actor_input.batch_size, self.agent_spec.n]
-        actor_output = torch.vmap(self.actor, in_dims=(1, 0), out_dims=1, randomness="different")(
-            actor_input, self.actor_params, deterministic=deterministic
-        )
-
-        tensordict.update(actor_output)
+        # actor_output = torch.vmap(self.actor, in_dims=(1, 0), out_dims=1, randomness="different")(
+        #     actor_input, self.actor_params, deterministic=deterministic
+        # )
+        #
+        # tensordict.update(actor_output)
         tensordict.update(self.value_op(tensordict))
         return tensordict
 
