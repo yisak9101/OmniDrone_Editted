@@ -29,7 +29,7 @@ class LeeController:
         self.KP = np.diag([1, 1, 2]) * 0.1 # 69.44
         self.KV = np.diag([1, 1, 2]) * 0.1 # 24.304
         self.KR = np.diag([2, 2, 1]) * 5 # 8.81
-        self.KW = np.diag([1, 1, 1]) * 1 # 2.54
+        self.KW = np.diag([0.5, 0.5, 0.5]) * 1 # 2.54
         self.Gz = 9.81
         self.mass = mass
         self.mg = self.mass * self.Gz
@@ -58,7 +58,7 @@ class LeeController:
         v = current_state[1].reshape(3,1)
         vec_rot = current_state[2]
         Rot = np.hstack([vec_rot[0:3].reshape(3,1), vec_rot[3:6].reshape(3,1), vec_rot[6:9].reshape(3,1)])
-        # omega = current_state[3].reshape(3,1)
+        omega = current_state[3].reshape(3,1)
 
         # desired
         # desired_state : p, v, a, yaw
@@ -88,7 +88,11 @@ class LeeController:
         # collective thrust
         # f, omega : N, rad/s
         cmd_f = np.max([np.dot(tmp.reshape(3), (Rot @ self.e3).reshape(3)), 0])
-        cmd_omega = - self.KR @ e_R
+
+        omega_d = np.zeros((3,1)) 
+        e_w = omega - omega_d
+        
+        cmd_omega = - self.KR @ e_R - self.KW @ e_w
         cmd_omega = cmd_omega.reshape(3)
 
         if type=='real_input':

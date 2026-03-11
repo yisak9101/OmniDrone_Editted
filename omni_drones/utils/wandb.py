@@ -81,7 +81,7 @@ def init_wandb(cfg):
         kwargs["resume"] = "must"
     else:
         kwargs["id"] = wandb.util.generate_id()
-    wandb.login(key='38d70fff037ff9d077d2578011b4ec3279b35be6') # yisak personal api key
+    # wandb.login(key='38d70fff037ff9d077d2578011b4ec3279b35be6') # yisak personal api key
     run = wandb.init(**kwargs)
     cfg_dict = dict_flatten(OmegaConf.to_container(cfg))
     run.config.update(cfg_dict)

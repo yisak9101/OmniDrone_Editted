@@ -46,7 +46,7 @@ class TransportationCfg(RobotCfg):
     num_drones: int = 4
 
     def __post_init__(self):
-        if not self.num_drones in (4, 6):
+        if not self.num_drones in (1, 4, 6):
             raise ValueError
 
 class TransportationGroup(RobotBase):
@@ -139,6 +139,10 @@ class TransportationGroup(RobotBase):
                         [0.0, -0.5, 0],
                         [-1.0, -0.5, 0],
                         [-1.0, 0.5, 0],
+                    ])
+                elif self.num_drones==1:
+                    drone_translations = torch.tensor([
+                        [0.0, 0.0, -0.2],
                     ])
 
             for i in range(self.num_drones):

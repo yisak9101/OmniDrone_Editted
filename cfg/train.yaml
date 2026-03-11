@@ -1,6 +1,6 @@
 # hydra.job.chdir: false
 
-headless: true
+headless: false
 
 sim: ${task.sim}
 env: ${task.env}

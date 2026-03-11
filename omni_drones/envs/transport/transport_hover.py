@@ -116,12 +116,12 @@ class TransportHover(IsaacEnv):
 
         self.bar1 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_0/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
         self.bar1.initialize()
-        self.bar2 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_1/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
-        self.bar2.initialize()
-        self.bar3 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_2/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
-        self.bar3.initialize()
-        self.bar4 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_3/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
-        self.bar4.initialize()
+        # self.bar2 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_1/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
+        # self.bar2.initialize()
+        # self.bar3 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_2/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
+        # self.bar3.initialize()
+        # self.bar4 = RigidPrimView("/World/envs/env_*/Group_0/crazyflie_3/bar/Capsule",reset_xform_properties=False, shape=(-1, 1))
+        # self.bar4.initialize()
 
 
         self.init_poses = self.group.get_world_poses(clone=True)
@@ -311,7 +311,6 @@ class TransportHover(IsaacEnv):
         
         observation_spec = CompositeSpec({
             "obs_self": UnboundedContinuousTensorSpec((1, drone_state_dim)).to(self.device),
-            "obs_others": UnboundedContinuousTensorSpec((self.drone.n-1, 13+1)).to(self.device),
             "obs_payload": UnboundedContinuousTensorSpec((1, payload_state_dim)).to(self.device)
         })
 
@@ -380,7 +379,7 @@ class TransportHover(IsaacEnv):
         self.group.set_joint_positions(self.init_joint_pos[env_ids], env_ids)
         self.group.set_joint_velocities(self.init_joint_vel[env_ids], env_ids)
 
-        num_bar_dofs = 16
+        num_bar_dofs = 4
         bar_dof_indices = torch.arange(num_bar_dofs, device=self.device)
 
         random_damping = self.damping_dist.sample((len(env_ids), ))
@@ -408,9 +407,9 @@ class TransportHover(IsaacEnv):
 
         bar_masses = self.bar_mass_dist.sample(env_ids.shape)
         self.bar1.set_masses(bar_masses, env_ids)
-        self.bar2.set_masses(bar_masses, env_ids)
-        self.bar3.set_masses(bar_masses, env_ids)
-        self.bar4.set_masses(bar_masses, env_ids)
+        # self.bar2.set_masses(bar_masses, env_ids)
+        # self.bar3.set_masses(bar_masses, env_ids)
+        # self.bar4.set_masses(bar_masses, env_ids)
 
 
         # import pdb;pdb.set_trace()
@@ -623,9 +622,13 @@ class TransportHover(IsaacEnv):
         self.takeoff_history = torch.roll(self.takeoff_history, shifts=-1, dims=1)
         self.takeoff_history[:, -1] = is_above_threshold
 
-        # 4. 조건 확인: 최근 10개 중 7개 이상 True인가?
+        # 4. 조건 확인 및 상태 래치
         success_counts = self.takeoff_history.sum(dim=1)
         should_start_rl = success_counts >= self.success_threshold
+        
+        # 새로 이륙에 성공한 환경들만 찾아냅니다.
+        newly_started = should_start_rl & ~self.is_rl_control
+        self.is_rl_control = self.is_rl_control | should_start_rl
 
         state = tensordict['agents']['state']['drones'].cpu().numpy()
         pos = state[...,:3]
@@ -633,68 +636,67 @@ class TransportHover(IsaacEnv):
         vel = state[...,7:10]
         omega = state[...,10:13] * 180 / np.pi
 
-        if should_start_rl:
-            self.traj = [None] * self.drone.n
-            self.traj_step = 0
-            for i in range(self.drone.n):
-                start_state = [pos[0,i], vel[0,i], omega[0,i], 0]
+        # 환경별 궤적 단계를 관리할 텐서가 없다면 초기화합니다. (최초 1회)
+        if not hasattr(self, "env_traj_steps"):
+            self.env_traj_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+            self.env_trajs = [None] * self.num_envs # 각 환경별 DroneTrajectory 객체 저장 리스트
 
-                pf = pos[0,i] + 2
-                vf = np.array([0, 0, 0])
-                af = np.array([0, 0, 0])
-                yawf = 0
-                goal_state =[pf, vf, af, yawf]
+        # 새로 시작된 환경들에 대해 개별 궤적을 생성합니다.
+        if newly_started.any():
+            new_env_indices = torch.nonzero(newly_started).squeeze(-1).cpu().numpy()
+            for env_idx in new_env_indices:
+                self.env_trajs[env_idx] = [None] * self.drone.n
+                for i in range(self.drone.n):
+                    start_state = [pos[env_idx, i], vel[env_idx, i], omega[env_idx, i], 0]
+                    pf = pos[env_idx, i] + 2
+                    vf = np.array([0, 0, 0])
+                    af = np.array([0, 0, 0])
+                    yawf = 0
+                    goal_state = [pf, vf, af, yawf]
+                    
+                    duration = 5
+                    # 각 환경의 인덱스 위치에 궤적 객체를 저장합니다.
+                    self.env_trajs[env_idx][i] = DroneTrajectory(
+                        start_state, goal_state, t0=0, tf=duration/self.cfg.task.sim.dt*100
+                    )
+                # 해당 환경의 스텝을 0으로 초기화합니다.
+                self.env_traj_steps[env_idx] = 0
 
-                duration = 5
-                self.traj[i] = DroneTrajectory(start_state, goal_state, t0=0, tf=duration/self.cfg.task.sim.dt*100)
-
-        # 5. 상태 래치 (Latch): 한 번 RL 제어가 켜지면(True), 리셋 전까지 계속 True 유지
-        self.is_rl_control = self.is_rl_control | should_start_rl
-
-        # 6. 액션 선택 (RL 액션 vs Takeoff 액션)
-        # takeoff_action을 현재 action_to_apply와 같은 모양으로 확장
-
-        takeoff_env_ids = torch.nonzero(~self.is_rl_control).squeeze(-1)
-
-        if len(takeoff_env_ids) > 0:
-            pass
-
+        # 6. 액션 선택 및 제어기 계산
         takeoff_action = self.takeoff_action_value.expand_as(action_to_apply)
-
-        # is_rl_control이 True인 곳은 RL 액션, False인 곳은 Takeoff 액션 사용
-        # unsqueeze를 통해 차원을 맞춰줍니다. (num_envs, 1, 1) or (num_envs, n_drones, 1)
         mask = self.is_rl_control.unsqueeze(-1).unsqueeze(-1)
 
-        if self.is_rl_control:
-            for i in range(self.drone.n):
-                rot = R.from_quat(quat[0,i], scalar_first=True).as_matrix()
-                vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
-                cur_state = [pos[0,i], vel[0,i], vec_rot, omega[0,i]]
-                p_d, v_d, a_d, yaw_d = self.traj[i].get_trajectory(self.traj_step, rotation=False)
-                des_state = [p_d, v_d, a_d, yaw_d]
-                cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
-                cmd = cmd[0]
-                # action -> [f, omega]
-                # actual_f = cmd[0] # N - real_input
-                # omega = cmd[1:] # rad/s - real_input
-                actual_f = cmd[0]  # N - norm_input
-                target_omega = cmd[1:]  # rad/s - norm_input
-                action_to_apply[0, i, 0] = target_omega[0].item()
-                action_to_apply[0, i, 1] = target_omega[1].item()
-                action_to_apply[0, i, 2] = target_omega[2].item()
-                action_to_apply[0, i, 3] = actual_f.item()
-            self.traj_step += 1
-
-            # drone_traj = DroneTrajectory(
-            #     self.trajectory_start_state[prefix],
-            #     goal_state,
-            #     0,
-            #     duration,
-            # )
+        if self.is_rl_control.any():
+            active_envs = torch.nonzero(self.is_rl_control).squeeze(-1).cpu().numpy()
+            
+            for env_idx in active_envs:
+                # 해당 환경에 생성된 궤적이 있는지 확인합니다.
+                if self.env_trajs[env_idx] is None:
+                    continue
+                    
+                current_step = self.env_traj_steps[env_idx].item()
+                
+                for i in range(self.drone.n):
+                    rot = R.from_quat(quat[env_idx, i], scalar_first=True).as_matrix()
+                    vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
+                    cur_state = [pos[env_idx, i], vel[env_idx, i], vec_rot, omega[env_idx, i]]
+                    
+                    # 환경별 개별 스텝을 사용하여 궤적 포인트를 가져옵니다.
+                    p_d, v_d, a_d, yaw_d = self.env_trajs[env_idx][i].get_trajectory(current_step, rotation=False)
+                    des_state = [p_d, v_d, a_d, yaw_d]
+                    
+                    cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
+                    cmd = cmd[0]
+                    
+                    action_to_apply[env_idx, i, 0] = cmd[1].item() # target_omega_x
+                    action_to_apply[env_idx, i, 1] = cmd[2].item() # target_omega_y
+                    action_to_apply[env_idx, i, 2] = cmd[3].item() # target_omega_z
+                    action_to_apply[env_idx, i, 3] = cmd[0].item() # actual_f
+                
+                # 해당 환경의 스텝만 증가시킵니다.
+                self.env_traj_steps[env_idx] += 1
 
         final_action = torch.where(mask, action_to_apply, takeoff_action)
-        
-        # 7. 최종 액션 적용
         self.effort = self.drone.apply_action(final_action)
 
     def _compute_state_and_obs(self):
@@ -708,9 +710,7 @@ class TransportHover(IsaacEnv):
         self.payload_heading: torch.Tensor = quat_axis(self.payload_rot, axis=0)
         self.payload_up: torch.Tensor = quat_axis(self.payload_rot, axis=2)
         
-        self.drone_rpos = torch.vmap(cpos)(drone_pos, drone_pos)
-        self.drone_rpos = torch.vmap(off_diag)(self.drone_rpos)
-        self.drone_pdist = torch.norm(self.drone_rpos, dim=-1, keepdim=True)
+        # 다중 드론간 상대 위치 및 거리 계산 부분인 self.drone_rpos 및 self.drone_pdist 변수를 삭제합니다.
         payload_drone_rpos = self.payload_pos.unsqueeze(1) - drone_pos
 
         self.target_payload_rpose = torch.cat([
@@ -720,10 +720,10 @@ class TransportHover(IsaacEnv):
         
         payload_state = [
             self.target_payload_rpose,
-            self.payload_rot,  # 4
-            payload_vels,  # 6
-            self.payload_heading,  # 3
-            self.payload_up, # 3
+            self.payload_rot, 
+            payload_vels,  
+            self.payload_heading,  
+            self.payload_up, 
         ]
         if self.time_encoding:
             t = (self.progress_buf / self.max_episode_length).unsqueeze(-1)
@@ -734,14 +734,14 @@ class TransportHover(IsaacEnv):
         identity = torch.eye(self.drone.n, device=self.device).expand(self.num_envs, -1, -1)
         obs["obs_self"] = torch.cat(
             [-payload_drone_rpos, self.drone_states[..., 3:], identity], dim=-1
-        ).unsqueeze(2) # [..., 1, state_dim]
-        obs["obs_others"] = torch.cat(
-            [self.drone_rpos, self.drone_pdist, torch.vmap(others)(self.drone_states[..., 3:13])], dim=-1
-        ) # [..., n-1, state_dim + 1]
-        obs["obs_payload"] = payload_state.expand(-1, self.drone.n, -1).unsqueeze(2) # [..., 1, 22]
+        ).unsqueeze(2) 
+        
+        # obs_others 텐서 딕셔너리 할당 부분을 삭제합니다.
+        
+        obs["obs_payload"] = payload_state.expand(-1, self.drone.n, -1).unsqueeze(2) 
 
         state = TensorDict({}, self.num_envs)
-        state["payload"] = payload_state # [..., 1, 22]
+        state["payload"] = payload_state 
         state["drones"] = torch.cat([self.drone_states, identity], dim=-1)
 
         self.pos_error = self.target_payload_rpose[..., :3].norm(dim=-1, keepdim=True)
@@ -760,47 +760,30 @@ class TransportHover(IsaacEnv):
 
     def _compute_reward_and_done(self):
         vels = self.payload.get_velocities()
+        # 조인트 인덱스를 기존 16에서 4로 수정하여 단일 드론 막대에 맞춥니다.
         joint_positions = (
-                self.group.get_joint_positions()[..., :16]
-                / self.group.joint_limits[..., :16, 0].abs()
+                self.group.get_joint_positions()[..., :4]
+                / self.group.joint_limits[..., :4, 0].abs()
         )
 
-        # self.target_payload_rpose = torch.cat([
-        #     self.payload_target_pos - self.payload_pos,
-        #     self.payload_target_heading - self.payload_heading
-        # ], dim=-1)
-
         reward = torch.zeros(self.num_envs, self.drone.n, 1, device=self.device)
-        separation = self.drone_pdist.min(dim=-2).values.min(dim=-2).values
-
-        # curr_distance = torch.norm(self.payload_target_pos - self.payload_pos, dim=-1)
-        # max_distance = torch.norm(self.init_distance, dim=-1)
-        # pos_distance_ratio = 1 - curr_distance / max_distance
-        # pos_distance_ratio = pos_distance_ratio.view(-1, 1)
-        #
-        # curr_heading_distance = self.payload_target_heading / (self.payload_target_heading.norm(dim=-1, keepdim=True) + 1e-8) - self.payload_heading / (self.payload_heading.norm(dim=-1, keepdim=True) + 1e-8)
-        # curr_heading_distance = torch.norm(curr_heading_distance, dim=-1)
-        # max_heading_distance = 2
-        # heading_distance_ratio =  1 - curr_heading_distance / max_heading_distance
-        # heading_distance_ratio = heading_distance_ratio.view(-1, 1)
+        
+        # 다중 드론 간 최소 거리를 구하는 separation 변수 선언부를 완전히 삭제합니다.
 
         curr_distance = (self.payload_target_pos - self.payload_pos) ** 2
         curr_distance = torch.sum(curr_distance, dim=-1)
-        curr_distance = torch.sqrt(curr_distance + 1e-6)  # ([100])
-        pos_distance_ratio = 1 - 1 * curr_distance / self.init_distance  # ([100])
+        curr_distance = torch.sqrt(curr_distance + 1e-6)  
+        pos_distance_ratio = 1 - 1 * curr_distance / self.init_distance  
         pos_distance_ratio = pos_distance_ratio.view(-1, 1)
 
         curr_heading_distance = (self.payload_target_heading - self.payload_heading) ** 2
         curr_heading_distance = torch.sum(curr_heading_distance, dim=-1)
-        curr_heading_distance = torch.sqrt(curr_heading_distance + 1e-6)  # ([100])
-        # curr_heading_distance = curr_heading_distance.view(-1, 1)
-        # heading_distance_ratio = 1 - 1 * curr_heading_distance / self.init_heading_distance  # ([100])
+        curr_heading_distance = torch.sqrt(curr_heading_distance + 1e-6)  
         heading_distance_ratio = 1 / (curr_heading_distance + 1)
         heading_distance_ratio = heading_distance_ratio.view(-1, 1)
 
         distance = torch.norm(self.target_payload_rpose, dim=-1, keepdim=True)
-        # reward_pose = (pos_distance_ratio + heading_distance_ratio) / 2  # torch.exp(-distance * self.reward_distance_scale)
-        reward_pose = 10 * pos_distance_ratio + 1 * heading_distance_ratio  # torch.exp(-curr_heading_distance * self.reward_distance_scale)
+        reward_pose = 10 * pos_distance_ratio + 1 * heading_distance_ratio  
 
         heading_goal_reward = (curr_heading_distance.view(-1, 1) <= self.heading_distance_margin)
 
@@ -814,13 +797,16 @@ class TransportHover(IsaacEnv):
         reward_swing = self.reward_swing_weight * torch.exp(-torch.square(swing))
 
         reward_effort = self.reward_effort_weight * torch.exp(-self.effort).mean(-1, keepdim=True)
-        reward_separation = torch.square(separation / self.safe_distance).clamp(0, 1)
+        
+        # reward_separation 계산 로직을 삭제합니다.
+        
         reward_joint_limit = 0.5 * torch.mean(1 - torch.square(joint_positions), dim=-1)
 
         reward_action_smoothness = self.reward_action_smoothness_weight * -self.drone.throttle_difference
 
+        # 최종 보상 식에서 reward_separation 항을 지우고 상수 0.01만 곱해줍니다.
         reward[:] = (
-                    0.01 * reward_separation * (
+                    0.01 * (
                     reward_pose
                     + reward_pose * (reward_up + reward_spin + reward_swing)
                     + reward_joint_limit
