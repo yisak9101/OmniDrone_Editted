@@ -110,12 +110,12 @@ class MAPPOPolicy(object):
         self.n_updates = 0
         self.max_t = 1000
         self.trajs = [None] * 4
-        self.ctrl = LeeController(0.035, 0.6685, 0, [4, 4, 2])
+        self.ctrl = LeeController(0.04, 0.6685, 0, [4, 4, 2])
         self.last_time = 0
         self.goal = None
-        self.addition = np.zeros(3) + 5
+        self.addition = np.zeros(3) + 0.2
         self.start = 50
-        self.end = 100
+        self.end = 60
 
         self.offset = np.array([
             [0.5, 0.25, 0],
@@ -239,22 +239,22 @@ class MAPPOPolicy(object):
             yaw = quaternion_to_euler(quat[i])[..., -1]
             vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
 
-            p_d = p[i].copy()
-            p_d[..., 2] = payload_p[2] + 1.15
+            p_d = payload_p + self.offset[i]
+            p_d[..., 2] += + 1.05
             v_d = v[i].copy()
 
             if self.start <= timestep < self.end:
                 p_d += self.addition
 
             cur_state = [p[i], v[i], vec_rot]
-            des_state = [p_d, v_d, np.zeros(3), yaw.item()]
+            des_state = [p_d, np.zeros(3), np.zeros(3), yaw.item()]
 
             cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
             thrust = cmd[..., 0]
             omega = cmd[..., 1:4]
 
-            tensordict['agents']['action'][..., 0:3] = torch.tensor(omega/ np.pi, device='cuda')
-            tensordict['agents']['action'][..., 3] = torch.tensor(thrust / 0.6685, device='cuda')
+            tensordict['agents']['action'][0, i, 0:3] = torch.tensor(omega, device='cuda').squeeze()
+            tensordict['agents']['action'][0, i, 3] = torch.tensor(thrust, device='cuda')
 
         actor_input = tensordict.select(*self.actor_in_keys, strict=False)
         actor_input.batch_size = [*actor_input.batch_size, self.agent_spec.n]
