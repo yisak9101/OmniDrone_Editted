@@ -218,7 +218,8 @@ class TransportHover(IsaacEnv):
 
         info_spec = CompositeSpec({
             "payload_mass": UnboundedContinuousTensorSpec(1),
-            "drone_state":UnboundedContinuousTensorSpec((self.drone.n, 13))
+            "drone_state":UnboundedContinuousTensorSpec((self.drone.n, 13)),
+            "payload_pos": UnboundedContinuousTensorSpec(3)
         }).expand(self.num_envs).to(self.device)
         stats_spec = CompositeSpec({
             "return": UnboundedContinuousTensorSpec(self.drone.n),
@@ -291,6 +292,7 @@ class TransportHover(IsaacEnv):
         drone_pos = self.drone_states[..., :3]
 
         self.payload_pos, self.payload_rot = self.get_env_poses(self.payload.get_world_poses())
+        self.info["payload_pos"][:] = self.payload_pos.clone()
         self.payload_heading: torch.Tensor = quat_axis(self.payload_rot, axis=0)
         self.payload_up: torch.Tensor = quat_axis(self.payload_rot, axis=2)
         

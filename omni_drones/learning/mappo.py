@@ -113,7 +113,9 @@ class MAPPOPolicy(object):
         self.ctrl = LeeController(0.035, 0.6685, 0, [4, 4, 2])
         self.last_time = 0
         self.goal = None
-        self.addition = np.zeros(3) + 0
+        self.addition = np.zeros(3) + 5
+        self.start = 50
+        self.end = 100
 
         self.offset = np.array([
             [0.5, 0.25, 0],
@@ -223,7 +225,7 @@ class MAPPOPolicy(object):
         p = state[0,:,:3].cpu().numpy()
         quat = state[0,:,3:7]
         v = state[0,:,7:10].cpu().numpy()
-        payload_p = tensordict['agents']['state']['payload'][0,0,:3].cpu().numpy()
+        payload_p = tensordict['info']['payload_pos'][0,:].cpu().numpy()
 
         tensordict['agents']['action'] = torch.zeros(1,4,4, device=self.device)
 
@@ -237,14 +239,15 @@ class MAPPOPolicy(object):
             yaw = quaternion_to_euler(quat[i])[..., -1]
             vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
 
-            p_d = p[i]
-            p_d[..., 2] = payload_p[2] + 5
+            p_d = p[i].copy()
+            p_d[..., 2] = payload_p[2] + 1.15
+            v_d = v[i].copy()
 
-            if 50 <= timestep < 55:
+            if self.start <= timestep < self.end:
                 p_d += self.addition
 
             cur_state = [p[i], v[i], vec_rot]
-            des_state = [p_d, np.zeros(3), np.zeros(3), 0]
+            des_state = [p_d, v_d, np.zeros(3), yaw.item()]
 
             cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
             thrust = cmd[..., 0]
