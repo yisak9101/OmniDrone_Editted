@@ -35,8 +35,8 @@ from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
 from typing import Union
 import einops
-
-from controller import DroneTrajectory, LeeController
+from ...controllers.Lee_ctrl import LeeController
+from ...controllers.Trajectory import DroneTrajectory
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
 from .common import GAE
@@ -174,7 +174,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.max_t = 800
 
-        self.traj = DroneTrajectory([[0,0,2],[0,0,0],[0,0,0],0], [[2,2,5],[0,0,0],[0,0,0],0], 0, self.max_t)
+        self.traj = DroneTrajectory([[0,0,2],[0,0,0],[0,0,0],0], [[2,2,5],[0,0,0],[0,0,0],0], 0, 5)
         self.ctrl = LeeController(0.035, 0.6685, 0, [4,4,2])
 
         self.reset_cnt = 0
@@ -185,8 +185,8 @@ class PPOPolicy(TensorDictModuleBase):
     def __call__(self, tensordict: TensorDict):
         self.actor(tensordict)
 
-        t = tensordict['agents']['observation'][0,0,-1] * self.max_t
-        t = int(t)
+        t = tensordict['agents']['observation'][0,0,-1].item()
+        t = self.max_t * t * 0.01
         p = tensordict['agents']['observation'][0,0,:3].cpu().numpy()
         quat = tensordict['agents']['observation'][0,0,3:7]
         v = tensordict['agents']['observation'][0,0,7:10].cpu().numpy()
@@ -196,26 +196,26 @@ class PPOPolicy(TensorDictModuleBase):
         vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
         cur_state = [p, v, vec_rot]
 
-        if t == 0:
-            self.reset_cnt += 1
-        if self.reset_cnt == 4:
-            fig, axes = plt.subplots(7, 1, figsize=(10, 12), sharex=True)
-            title = ['pos x', 'pos y', 'pos z', 'vel x', 'vel y', 'vel z', 'yaw' ]
-
-            for i in range(7):
-                axes[i].plot(self.real[1:self.max_t, i], label=f"real")
-                axes[i].plot(self.target[1:self.max_t, i], label=f"target")
-                axes[i].legend()
-                axes[i].set_title(title[i])
-
-            axes[-1].set_xlabel("Sample index")
-            plt.tight_layout()
-            plt.show()
-
-            exit(0)
+        # if t == 0:
+        #     self.reset_cnt += 1
+        # if self.reset_cnt == 4:
+        #     fig, axes = plt.subplots(7, 1, figsize=(10, 12), sharex=True)
+        #     title = ['pos x', 'pos y', 'pos z', 'vel x', 'vel y', 'vel z', 'yaw' ]
+        #
+        #     for i in range(7):
+        #         axes[i].plot(self.real[1:self.max_t, i], label=f"real")
+        #         axes[i].plot(self.target[1:self.max_t, i], label=f"target")
+        #         axes[i].legend()
+        #         axes[i].set_title(title[i])
+        #
+        #     axes[-1].set_xlabel("Sample index")
+        #     plt.tight_layout()
+        #     plt.show()
+        #
+        #     exit(0)
 
         # trajectory generation
-        p_d, v_d, a_d, yaw_d = self.traj.get_trajectory(int(t), rotation=False)
+        p_d, v_d, a_d, yaw_d = self.traj.get_trajectory(t, rotation=False)
         des_state = [p_d, v_d, a_d, yaw_d]
 
         # compute controller
@@ -223,13 +223,13 @@ class PPOPolicy(TensorDictModuleBase):
         thrust = cmd[..., 0]
         omega = cmd[..., 1:4]
 
-        if t + 1< self.max_t:
-            self.target[t + 1, :3] = p_d
-            self.target[t + 1, 3:6] = v_d
-            self.target[t + 1, 6] = yaw_d
-            self.real[t, :3] = p
-            self.real[t, 3:6] = v
-            self.real[t, 6] = yaw
+        # if t + 1< self.max_t:
+        #     self.target[t + 1, :3] = p_d
+        #     self.target[t + 1, 3:6] = v_d
+        #     self.target[t + 1, 6] = yaw_d
+        #     self.real[t, :3] = p
+        #     self.real[t, 3:6] = v
+        #     self.real[t, 6] = yaw
 
         tensordict['agents']['action'][..., 0:3] = torch.tensor(omega/ np.pi, device='cuda')
         tensordict['agents']['action'][..., 3] = torch.tensor(thrust / 0.6685, device='cuda')

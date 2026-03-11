@@ -258,7 +258,7 @@ def main(cfg):
             format="mp4"
         )
         frames = np.moveaxis(frames, 1, -1)
-        imageio.mimsave("/home/mlic/Repo/OmniDrone/video.mp4", frames, fps=0.5 / cfg.sim.dt)
+        # imageio.mimsave("/home/mlic/Repo/OmniDrone/video.mp4", frames, fps=0.5 / cfg.sim.dt)
         return info
     # evaluate()
 
@@ -276,7 +276,7 @@ def main(cfg):
             }
             info.update(stats)
         
-        info.update(policy.train_op(data.to_tensordict()))
+        # info.update(policy.train_op(data.to_tensordict()))
 
         if eval_interval > 0 and i % eval_interval == 0:
             logging.info(f"Eval at {collector._frames} steps.")
