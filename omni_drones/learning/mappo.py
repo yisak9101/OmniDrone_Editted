@@ -113,6 +113,14 @@ class MAPPOPolicy(object):
         self.ctrl = LeeController(0.035, 0.6685, 0, [4, 4, 2])
         self.last_time = 0
         self.goal = None
+        self.addition = np.zeros(3) + 0
+
+        self.offset = np.array([
+            [0.5, 0.25, 0],
+            [0.5, -0.25, 0],
+            [-0.5, -0.25, 0],
+            [-0.5, 0.25, 0],
+        ])
 
     @property
     def act_logps_name(self):
@@ -210,55 +218,35 @@ class MAPPOPolicy(object):
 
     def __call__(self, tensordict: TensorDict, deterministic: bool = False):
         state = tensordict['info']['drone_state']
-        timesteps = tensordict['agents','state','payload'][0,0,-1].item() * self.max_t
-        time = timesteps * 0.01
+        timestep = tensordict['agents','state','payload'][0,0,-1].item() * self.max_t
+        time = timestep * 0.01
         p = state[0,:,:3].cpu().numpy()
         quat = state[0,:,3:7]
         v = state[0,:,7:10].cpu().numpy()
-
-        if timesteps < 5:
-            # right after reset
-            self.trajs = [None] * 4
-            tensordict['agents']['action'] = torch.zeros(1, 4, 4, device=self.device)
-            self.last_time = 0
-            self.goal = p
-            return tensordict
-
-        if self.trajs[0] is None or time > self.last_time:
-            self.last_time += 2
-            for i in range(4):
-                self.trajs[i] = DroneTrajectory([p[i], np.zeros(3), np.zeros(3), 0], [self.goal[i], np.zeros(3), np.zeros(3), 0], time, self.last_time)
+        payload_p = tensordict['agents']['state']['payload'][0,0,:3].cpu().numpy()
 
         tensordict['agents']['action'] = torch.zeros(1,4,4, device=self.device)
+
+        if timestep < 3:
+            # right after reset
+            tensordict['agents']['action'] = torch.zeros(1, 4, 4, device=self.device)
+            return tensordict
 
         for i in range(4):
             rot = quaternion_to_rotation_matrix(quat[i]).cpu().numpy()
             yaw = quaternion_to_euler(quat[i])[..., -1]
             vec_rot = np.hstack([rot[:, 0], rot[:, 1], rot[:, 2]])
 
-            p_d, v_d, a_d, yaw_d = self.trajs[i].get_trajectory(time, rotation=False)
+            p_d = payload_p + self.offset[i]
+            p_d[..., 2] += 5
+
+            if 50 <= timestep < 55:
+                p_d += self.addition
+
             cur_state = [p[i], v[i], vec_rot]
-            des_state = [p_d, v_d, a_d, yaw_d]
+            des_state = [p_d, np.zeros(3), np.zeros(3), 0]
 
-            max_pos_err_xy = 0.01  # 현재 위치 기준 허용 오차 [m]
-            max_vel_xy = 0.01  # 목표 속도 제한 [m/s]
-
-            p_d_clamped = p_d.copy()
-            v_d_clamped = v_d.copy()
-
-            # position clamp
-            pos_err_xy = p_d[:2] - p[i, :2]
-            pos_err_xy = np.clip(pos_err_xy, -max_pos_err_xy, max_pos_err_xy)
-            p_d_clamped[:2] = p[i, :2] + pos_err_xy
-
-            # velocity clamp
-            vel_err_xy = v_d[:2] - v[i, :2]
-            vel_err_xy = np.clip(vel_err_xy, -max_vel_xy, max_vel_xy)
-            v_d_clamped[:2] = v[i, :2] + vel_err_xy
-
-            fixed_des_state = [p_d_clamped, v_d_clamped, a_d, yaw_d]
-
-            cmd, _ = self.ctrl.compute_control(cur_state, fixed_des_state, type="norm_input")
+            cmd, _ = self.ctrl.compute_control(cur_state, des_state, type="norm_input")
             thrust = cmd[..., 0]
             omega = cmd[..., 1:4]
 
