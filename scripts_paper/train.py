@@ -258,7 +258,7 @@ def main(cfg):
             format="mp4"
         )
         frames = np.moveaxis(frames, 1, -1)
-        # imageio.mimsave("/home/mlic/Repo/OmniDrone/video.mp4", frames, fps=0.5 / cfg.sim.dt)
+        imageio.mimsave("/home/mlic/Repo/OmniDrone_Editted/video.mp4", frames, fps=0.5 / cfg.sim.dt)
         return info
     # evaluate()
 

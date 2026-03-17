@@ -113,7 +113,7 @@ class MAPPOPolicy(object):
         self.ctrl = LeeController(0.04, 0.6685, 0, [4, 4, 2])
         self.last_time = 0
         self.goal = None
-        self.addition = np.zeros(3) + 0.2
+        self.addition = np.zeros(3) + 1
         self.start = 50
         self.end = 60
 
@@ -232,7 +232,13 @@ class MAPPOPolicy(object):
         if timestep < 3:
             # right after reset
             tensordict['agents']['action'] = torch.zeros(1, 4, 4, device=self.device)
+            self.cur_pos = []
+            self.des_pos = []
+            self.omega = []
+            self.thrust = []
             return tensordict
+
+
 
         for i in range(4):
             rot = quaternion_to_rotation_matrix(quat[i]).cpu().numpy()
@@ -255,6 +261,12 @@ class MAPPOPolicy(object):
 
             tensordict['agents']['action'][0, i, 0:3] = torch.tensor(omega, device='cuda').squeeze()
             tensordict['agents']['action'][0, i, 3] = torch.tensor(thrust, device='cuda')
+
+            if timestep > self.end and i == 1:
+                self.cur_pos.append(p[i])
+                self.des_pos.append(p_d)
+                self.omega.append(omega)
+                self.thrust.append(thrust)
 
         actor_input = tensordict.select(*self.actor_in_keys, strict=False)
         actor_input.batch_size = [*actor_input.batch_size, self.agent_spec.n]
