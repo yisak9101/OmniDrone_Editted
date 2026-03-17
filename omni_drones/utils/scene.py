@@ -181,6 +181,7 @@ def create_bar(
     mass: float = 0.02,
     enable_collision=False,
     color=(0.4, 0.4, 0.2),
+    from_offset=None
 ):
     if isinstance(from_prim, str):
         from_prim = prim_utils.get_prim_at_path(from_prim)
@@ -230,8 +231,10 @@ def create_bar(
         joint.GetAttribute("limit:rotY:physics:high").Set(120)
         UsdPhysics.DriveAPI.Apply(joint, "rotX")
         UsdPhysics.DriveAPI.Apply(joint, "rotY")
-        joint.GetAttribute("drive:rotX:physics:damping").Set(0.0002)
-        joint.GetAttribute("drive:rotY:physics:damping").Set(0.0002)
+        UsdPhysics.DriveAPI.Apply(joint, "rotZ")
+        joint.GetAttribute("drive:rotX:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotY:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotZ:physics:damping").Set(0.002) # 값을 높게 설정
 
     if to_prim is not None:
         joint: Usd.Prim = script_utils.createJoint(stage, "D6", prim, to_prim)
@@ -241,8 +244,10 @@ def create_bar(
         joint.GetAttribute("limit:rotY:physics:high").Set(120)
         UsdPhysics.DriveAPI.Apply(joint, "rotX")
         UsdPhysics.DriveAPI.Apply(joint, "rotY")
-        joint.GetAttribute("drive:rotX:physics:damping").Set(0.0002)
-        joint.GetAttribute("drive:rotY:physics:damping").Set(0.0002)
+        UsdPhysics.DriveAPI.Apply(joint, "rotZ")
+        joint.GetAttribute("drive:rotX:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotY:physics:damping").Set(0.002)
+        joint.GetAttribute("drive:rotZ:physics:damping").Set(0.002)
 
     return prim
 

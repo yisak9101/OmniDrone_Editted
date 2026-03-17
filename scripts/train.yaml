@@ -4,21 +4,21 @@ hydra:
   # see https://hydra.cc/docs/advanced/search_path/
    - file://../cfg
 
-headless: false
+headless: true
 
 sim: ${task.sim}
 env: ${task.env}
 
 total_frames: 150_000_000
 max_iters: -1
-eval_interval: -1
-save_interval: -1
+eval_interval: 10000
+save_interval: 10000
 seed: 0
 
 viewer:
   resolution: [960, 720]
-  eye: [8, 0., 6.]
-  lookat: [0., 0., 1.]
+  eye: [9, -4.5, 2.3]
+  lookat: [0., 0., 1.5]
 
 wandb:
   group: ${oc.select:..task.name}
@@ -32,6 +32,6 @@ wandb:
   tags: 
 
 defaults:
-  - task: Hover
-  - algo: ppo
+  - task: TransportHover
+  - algo: mappo
   - _self_

@@ -7,16 +7,16 @@ defaults:
   # - /base/randomization_base@_here_
 
 env:
-  num_envs: 1
+  num_envs: 300
   env_spacing: 50
   max_episode_length: 2000
 
-drone_model: Hummingbird
-num_drones: 4
+drone_model: Crazyflie
+num_drones: 1
 force_sensor: false
 time_encoding: true
 
-payload_mass_scale: [0.5, 0.5]
+payload_mass_scale: [0.15, 0.15]
 
 reward_effort_weight: 0.2
 reward_spin_weight: 0.8
@@ -28,4 +28,4 @@ safe_distance: 0.5
 ravel_obs: true
 flatten_state: true
 
-action_transform: rate
+action_transform: position

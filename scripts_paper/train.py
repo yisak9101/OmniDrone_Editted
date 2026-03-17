@@ -140,6 +140,12 @@ def main(cfg):
             controller = LeePositionController(9.81, base_env.drone.params).to(base_env.device)
             transform = VelController(controller)
             transforms.append(transform)
+        elif action_transform == "position":
+            from omni_drones.controllers import LeePositionController
+            from omni_drones.utils.torchrl.transforms import PositionController
+            controller = LeePositionController(9.81, base_env.drone.params).to(base_env.device)
+            transform = PositionController(controller)
+            transforms.append(transform)
         elif action_transform == "attitude":
             from omni_drones.controllers import AttitudeController as Controller
             from omni_drones.utils.torchrl.transforms import AttitudeController
@@ -258,7 +264,7 @@ def main(cfg):
             format="mp4"
         )
         frames = np.moveaxis(frames, 1, -1)
-        # imageio.mimsave("/home/mlic/Repo/OmniDrone/video.mp4", frames, fps=0.5 / cfg.sim.dt)
+        imageio.mimsave("./video.mp4", frames, fps=0.5 / cfg.sim.dt)
         return info
     # evaluate()
 

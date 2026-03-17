@@ -46,7 +46,7 @@ class TransportationCfg(RobotCfg):
     num_drones: int = 4
 
     def __post_init__(self):
-        if not self.num_drones in (4, 6):
+        if not self.num_drones in (1, 4, 6):
             raise ValueError
 
 class TransportationGroup(RobotBase):
@@ -95,15 +95,17 @@ class TransportationGroup(RobotBase):
                 translation=translation,
             )
 
-            if self.num_drones == 4:
-                self.payload_scale = (0.5, 0.25, 0.2)
-            elif self.num_drones == 6:
-                self.payload_scale = (1.0, 0.5, 0.2)
+            # if self.num_drones == 4:
+            self.payload_scale = (0.15, 0.1, 0.05)
+            # elif self.num_drones == 6:
+            #     self.payload_scale = (1.0, 0.5, 0.2)
 
+
+            payload_transition = (0.0, 0.0, -1.1)
             payload = prim_utils.create_prim(
                 prim_path=f"{prim_path}/payload",
                 prim_type="Cube",
-                translation=(0.0, 0.0, -1.1),
+                translation=payload_transition,
                 scale=self.payload_scale,
             )
 
@@ -120,13 +122,14 @@ class TransportationGroup(RobotBase):
             if drone_translations_origin is not None:
                 drone_translations = drone_translations_origin
             else:
-
+                edge_x = self.payload_scale[0] 
+                edge_y = self.payload_scale[1]
                 if self.num_drones == 4:
                     drone_translations = torch.tensor([
-                        [0.5, 0.25, 0],
-                        [0.5, -0.25, 0],
-                        [-0.5, -0.25, 0],
-                        [-0.5, 0.25, 0],
+                        [edge_x, edge_y, -0.2],
+                        [edge_x, -edge_y, -0.2],
+                        [-edge_x, -edge_y, -0.2],
+                        [-edge_x, edge_y, -0.2],
                     ])
                 elif self.num_drones == 6:
                     drone_translations = torch.tensor([
@@ -136,6 +139,10 @@ class TransportationGroup(RobotBase):
                         [0.0, -0.5, 0],
                         [-1.0, -0.5, 0],
                         [-1.0, 0.5, 0],
+                    ])
+                elif self.num_drones==1:
+                    drone_translations = torch.tensor([
+                        [0.0, 0.0, -0.2],
                     ])
 
             for i in range(self.num_drones):
@@ -161,14 +168,30 @@ class TransportationGroup(RobotBase):
                     prim=drone_prim,
                 )
 
+
+                drone_z = drone_translations[i][2].item()
+                payload_center_z = payload_transition[2]
+                payload_top_z = payload_center_z + self.payload_scale[2]/2
+
+                target_length = abs(drone_z - payload_top_z)
+                bar_center_z = -(target_length / 2.0)
+
+                offset_x = drone_translations[i][0].item()
+                offset_y = drone_translations[i][1].item()
+                
+                offset_z = self.payload_scale[2]/2
+
+                bar_attach_offset = (offset_x, offset_y, offset_z)
+
                 scene_utils.create_bar(
                     prim_path=f"{prim_path}/{self.drone.name.lower()}_{i}/bar",
-                    length=1,
-                    translation=(0, 0, -0.5),
+                    length=target_length,
+                    translation=(0, 0, bar_center_z),
                     from_prim=payload,
                     to_prim=f"{prim_path}/{self.drone.name.lower()}_{i}/base_link",
                     mass=0.001,
-                    enable_collision=enable_collision
+                    enable_collision=enable_collision,
+                    from_offset=(offset_x, offset_y, offset_z)
                 )
 
             UsdPhysics.ArticulationRootAPI.Apply(xform)
@@ -198,6 +221,8 @@ class TransportationGroup(RobotBase):
             track_contact_forces=track_contact_forces
         )
         self.payload_view.initialize()
+
+
         self.joint_limits = self._view.get_dof_limits().clone()
 
         self.pos = torch.zeros(*self.shape, 3, device=self.device)
