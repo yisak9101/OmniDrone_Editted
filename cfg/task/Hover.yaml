@@ -8,6 +8,11 @@ defaults:
 env:
   num_envs: 1
 
+randomization:
+  payload:
+    z: [0.01, 0.01]
+    mass : [0.15, 0.15]
+
 drone_model: Crazyflie
 force_sensor: false
 time_encoding: true
@@ -20,4 +25,4 @@ reward_distance_scale: 1.2
 #ravel_obs: true
 #flatten_state: true
 
-action_transform: rate
+action_transform: position

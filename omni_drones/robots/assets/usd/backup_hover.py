@@ -1,3 +1,26 @@
+# MIT License
+# 
+# Copyright (c) 2023 Botian Xu, Tsinghua University
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+
 import functorch
 import torch
 import torch.distributions as D
@@ -7,60 +30,11 @@ import omni.isaac.core.utils.prims as prim_utils
 from omni_drones.envs.isaac_env import AgentSpec, IsaacEnv
 from omni_drones.robots.drone import MultirotorBase
 from omni_drones.views import ArticulationView, RigidPrimView
-from omni_drones.utils.torch import euler_to_quaternion, quat_axis, quaternion_to_rotation_matrix, normalize
+from omni_drones.utils.torch import euler_to_quaternion, quat_axis
 
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, DiscreteTensorSpec
 from omni_drones.controllers import LeePositionController
-from omni_drones.controllers import RateController
-
-
-class BatchedMinimumJerkTrajectory:
-    def __init__(self, device):
-        self.device = device
-        self.start_pos = None
-        self.target_pos = None
-        self.duration_steps = None
-        self.start_step = None
-
-    def reset(self, env_ids, start_pos, target_pos, duration_steps, current_step):
-        if self.start_pos is None:
-            shape = start_pos.shape
-            self.start_pos = torch.zeros_like(start_pos)
-            self.target_pos = torch.zeros_like(target_pos)
-            self.duration_steps = torch.zeros((*shape[:-1], 1), device=self.device)
-            self.start_step = torch.zeros((*shape[:-1], 1), device=self.device)
-
-        self.start_pos[env_ids] = start_pos[env_ids].clone()
-        self.target_pos[env_ids] = target_pos[env_ids].clone()
-        self.duration_steps[env_ids] = duration_steps[env_ids].clone()
-        self.start_step[env_ids] = current_step[env_ids].clone()
-
-    def get_state(self, current_step, dt):
-        t_steps = current_step - self.start_step
-        tau = torch.clamp(t_steps / self.duration_steps, min=0.0, max=1.0)
-        
-        tau2 = tau * tau
-        tau3 = tau2 * tau
-        tau4 = tau3 * tau
-        tau5 = tau4 * tau
-        
-        c_p = 10 * tau3 - 15 * tau4 + 6 * tau5
-        
-        duration_time = self.duration_steps * dt
-        valid_duration = torch.clamp(duration_time, min=1e-5)
-        
-        c_v = (30 * tau2 - 60 * tau3 + 30 * tau4) / valid_duration
-        c_a = (60 * tau - 180 * tau2 + 120 * tau3) / (valid_duration * valid_duration)
-        
-        delta_pos = self.target_pos - self.start_pos
-        
-        pos = self.start_pos + delta_pos * c_p
-        vel = delta_pos * c_v
-        acc = delta_pos * c_a
-        
-        return pos, vel, acc
-
 
 def attach_payload(parent_path):
     from omni.isaac.core import objects
@@ -85,6 +59,58 @@ def attach_payload(parent_path):
 
 
 class Hover(IsaacEnv):
+    r"""
+    A basic control task. The goal for the agent is to maintain a stable
+    position and heading in mid-air without drifting. This task is designed
+    to serve as a sanity check.
+
+    ## Observation
+    The observation space consists of the following part:
+
+    - `rpos` (3): The position relative to the target hovering position.
+    - `root_state` (16 + `num_rotors`): The basic information of the drone (except its position), 
+      containing its rotation (in quaternion), velocities (linear and angular), 
+      heading and up vectors, and the current throttle.
+    - `rheading` (3): The difference between the reference heading and the current heading.
+    - `time_encoding` (optional): The time encoding, which is a 4-dimensional vector encoding the current
+      progress of the episode.
+
+    ## Reward
+    - `pos`: Reward computed from the position error to the target position.
+    - `heading_alignment`: Reward computed from the alignment of the heading to the target heading.
+    - `up`: Reward computed from the uprightness of the drone to discourage large tilting.
+    - `spin`: Reward computed from the spin of the drone to discourage spinning.
+    - `effort`: Reward computed from the effort of the drone to optimize the
+      energy consumption.
+    - `action_smoothness`: Reward that encourages smoother drone actions, computed based on the throttle difference of the drone.
+
+    The total reward is computed as follows:
+
+    ```{math}
+        r = r_\text{pos} + r_\text{pos} * (r_\text{up} + r_\text{spin}) + r_\text{effort} + r_\text{action_smoothness}
+    ```
+        
+    ## Episode End
+    The episode ends when the drone mishebaves, i.e., it crashes into the ground or flies too far away:
+
+    ```{math}
+        d_\text{pos} > 4 \text{ or } x^w_z < 0.2
+    ```
+    
+    or when the episode reaches the maximum length.
+
+
+    ## Config
+
+    | Parameter               | Type  | Default   | Description |
+    |-------------------------|-------|-----------|-------------|
+    | `drone_model`           | str   | "firefly" | Specifies the model of the drone being used in the environment. |
+    | `reward_distance_scale` | float | 1.2       | Scales the reward based on the distance between the drone and its target. |
+    | `time_encoding`         | bool  | True      | Indicates whether to include time encoding in the observation space. If set to True, a 4-dimensional vector encoding the current progress of the episode is included in the observation. If set to False, this feature is not included. |
+    | `has_payload`           | bool  | False     | Indicates whether the drone has a payload attached. If set to True, it means that a payload is attached; otherwise, if set to False, no payload is attached. |
+
+
+    """
     def __init__(self, cfg, headless):
         self.reward_effort_weight = cfg.task.reward_effort_weight
         self.reward_action_smoothness_weight = cfg.task.reward_action_smoothness_weight
@@ -140,16 +166,19 @@ class Hover(IsaacEnv):
         self.target_heading = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self.alpha = 0.8
 
-        # 하드코딩 없이 드론 모델의 실제 설정값을 RateController에 직접 넘겨줍니다.
-        self.rate_ctrl = RateController(g=9.81, uav_params=self.drone.params).to(self.device)
-        
-        # 위치 제어 게인 (시뮬레이션 스케일에 맞는 범용적인 제어 이득값)
-        self.kp = torch.tensor([8.0, 8.0, 10.0], device=self.device)
-        self.kv = torch.tensor([4.0, 4.0, 5.0], device=self.device)
-        self.kr = torch.tensor([8.0, 8.0, 4.0], device=self.device)
-        self.g = 9.81
-        
-        self.traj_generator = BatchedMinimumJerkTrajectory(self.device)
+        # 드론의 질량과 로터 상수를 가져와 컨트롤러 파라미터 딕셔너리를 구성합니다
+        mass_val = self.drone.MASS_0.view(-1)[0].item() if hasattr(self.drone, 'MASS_0') else 1.0
+        kf_val = self.drone.KF.view(-1)[0].item() if hasattr(self.drone, 'KF') else 8.5e-6
+        max_rot_val = self.drone.MAX_ROT_VEL.view(-1)[0].item() if hasattr(self.drone, 'MAX_ROT_VEL') else 800.0
+
+        params = {
+            'mass': mass_val,
+            'rotor_configuration': {
+                'force_constants': [kf_val, 0, 0],
+                'max_rotation_velocities': [max_rot_val, 0, 0]
+            }
+        }
+        self.ctrl = LeePositionController(g=9.81, uav_params=self.drone.params).to(self.device)
 
     def _design_scene(self):
         import omni_drones.utils.kit as kit_utils
@@ -244,6 +273,7 @@ class Hover(IsaacEnv):
         self.stats = stats_spec.zero()
         self.info = info_spec.zero()
 
+
     def _reset_idx(self, env_ids: torch.Tensor):
         self.drone._reset_idx(env_ids, self.training)
         
@@ -256,6 +286,7 @@ class Hover(IsaacEnv):
         self.drone.set_velocities(self.init_vels[env_ids], env_ids)
 
         if self.has_payload:
+            # TODO@btx0424: workout a better way 
             payload_z = self.payload_z_dist.sample(env_ids.shape)
             joint_indices = torch.tensor([self.drone._view._dof_indices["PrismaticJoint"]], device=self.device)
             self.drone._view.set_joint_positions(
@@ -269,81 +300,57 @@ class Hover(IsaacEnv):
             payload_mass = self.payload_mass_dist.sample(env_ids.shape+(1,)) * self.drone.masses[env_ids]
             self.payload.set_masses(payload_mass, env_indices=env_ids)
 
-        # 복구된 타겟 헤딩 로직
         target_rpy = self.target_rpy_dist.sample((*env_ids.shape, 1))
         target_rot = euler_to_quaternion(target_rpy)
         self.target_heading[env_ids] = quat_axis(target_rot.squeeze(1), 0).unsqueeze(1)
         self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
 
         self.stats[env_ids] = 0.
-        
-        current_step = self.progress_buf[env_ids].unsqueeze(-1).unsqueeze(-1).float()
-        start_pos = self.drone.get_state()[env_ids, ..., :3].clone()
-        target_pos_env = self.target_pos.expand(len(env_ids), self.drone.n, 3).clone()
-        target_pos_env[..., 2] = 3.0
-        
-        duration_steps = torch.ones_like(current_step) * 200.0 
-        self.traj_generator.reset(env_ids, start_pos, target_pos_env, duration_steps, current_step)
 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         root_state = self.drone.get_state()
         kinematic_state = root_state[..., :13]
-        
         pos = kinematic_state[..., :3]
-        rot = kinematic_state[..., 3:7]
-        vel = kinematic_state[..., 7:10]
         
-        current_step = self.progress_buf.unsqueeze(-1).unsqueeze(-1).float()
-        target_pos, target_vel, target_acc = self.traj_generator.get_state(current_step, self.dt)
+        # 1. 목표 위치 설정 (3m 상공)
+        target_pos = self.target_pos.expand(self.num_envs, self.drone.n, 3).clone()
+        target_pos[..., 2] = 3.0
         
-        # 1. 위치 및 속도 오차
-        pos_error = pos - target_pos
-        vel_error = vel - target_vel
+        # 2. 오차 폭주 방지: 드론이 부드럽게 상승하도록 가상 타겟을 조금씩 이동시킵니다.
+        if not hasattr(self, 'current_target_pos'):
+            self.current_target_pos = pos.clone()
+            
+        direction = target_pos - self.current_target_pos
+        dist = torch.norm(direction, dim=-1, keepdim=True)
+        # 한 스텝당 타겟 이동 거리 제한 (약 2m/s의 부드러운 상승 유도)
+        move = direction / (dist + 1e-6) * torch.clamp(dist, max=0.02)
+        self.current_target_pos = self.current_target_pos + move
         
-        # 2. 동적 질량 로드 및 피드포워드 힘 계산
-        # 드론 객체에서 실제 질량 텐서를 가져와 정확한 중력을 보상합니다.
-        mass = self.drone.masses.view(-1, self.drone.n, 1)
-        force_des = -self.kp * pos_error - self.kv * vel_error + target_acc
-        force_des = force_des * mass
-        force_des[..., 2] += (mass * self.g).squeeze(-1)
-        
-        # 3. 현재 회전 행렬을 통해 스칼라 추력(target_thrust) 추출
-        R = quaternion_to_rotation_matrix(rot)
-        z_axis = R[..., 2]
-        target_thrust = torch.sum(force_des * z_axis, dim=-1, keepdim=True)
-        target_thrust = torch.clamp(target_thrust, min=0.0)
-        
-        # 4. 목표 자세 회전 행렬 계산 (복구된 target_heading 연동)
-        b3_des = normalize(force_des)
-        b1_proj = self.target_heading.expand(self.num_envs, self.drone.n, 3).clone()
-        b1_proj[..., 2] = 0.0
-        b1_proj = normalize(b1_proj)
-        
-        b2_des = normalize(torch.cross(b3_des, b1_proj, dim=-1))
-        b1_des = torch.cross(b2_des, b3_des, dim=-1)
-        R_des = torch.stack([b1_des, b2_des, b3_des], dim=-1)
-        
-        # 5. SO(3) 자세 오차 계산
-        error_matrix = 0.5 * (torch.matmul(R_des.transpose(-2, -1), R) - torch.matmul(R.transpose(-2, -1), R_des))
-        error_R = torch.stack([error_matrix[..., 2, 1], error_matrix[..., 0, 2], error_matrix[..., 1, 0]], dim=-1)
-        
-        # 6. 목표 각속도(target_rate) 산출
-        target_rate = -self.kr * error_R
-        
-        # 7. RateController 호출 및 모터 명령 인가
-        # (Omnidrone 내부에서 모터 파라미터 제원을 읽어 알아서 -1~1 값으로 매핑합니다)
-        cmd = self.rate_ctrl(
+        # 요 각도 강제 고정 (자세 뒤틀림 방지)
+        target_yaw = torch.zeros(self.num_envs, self.drone.n, 1, device=self.device)
+
+        # 3. 순수 제어기 연산 (내부 파라미터 조작 전부 삭제!)
+        cmd = self.ctrl(
             root_state=kinematic_state, 
-            target_rate=target_rate,
-            target_thrust=target_thrust
+            target_pos=self.current_target_pos,
+            target_yaw=target_yaw
         )
         
-        self.effort = self.drone.apply_action(cmd)
+        # --- [제안해주신 핵심 로직] ---
+        # 4. 제어기 출력이 드론의 물리적 한계를 넘지 않도록 최소/최대 출력(-1 ~ 1)으로 강제 제한
+        clamped_cmd = torch.clamp(cmd, min=-1.0, max=1.0)
+        
+        # 5. 드론 시뮬레이터의 실제 모터 입력에 맞춰 '선형 추력'을 '모터 회전 속도'로 변환
+        thrust_ratio = (clamped_cmd + 1.0) / 2.0
+        corrected_cmd = 2.0 * torch.sqrt(thrust_ratio) - 1.0
+        
+        self.effort = self.drone.apply_action(corrected_cmd)
 
     def _compute_state_and_obs(self):
         self.root_state = self.drone.get_state()
         self.info["drone_state"][:] = self.root_state[..., :13]
 
+        # relative position and heading
         self.rpos = self.target_pos - self.root_state[..., :3]
         self.rheading = self.target_heading - self.root_state[..., 13:16]
         
@@ -353,6 +360,7 @@ class Hover(IsaacEnv):
             obs.append(t.expand(-1, self.time_encoding_dim).unsqueeze(1))
         obs = torch.cat(obs, dim=-1)
 
+        # 수정된 부분: TensorDict 래핑을 제거하고 텐서 자체를 할당합니다.
         state = self.root_state
 
         return TensorDict({
@@ -365,17 +373,22 @@ class Hover(IsaacEnv):
         }, self.batch_size)
 
     def _compute_reward_and_done(self):
+        # pose reward
         pos_error = torch.norm(self.rpos, dim=-1)
         heading_alignment = torch.sum(self.drone.heading * self.target_heading, dim=-1)
         
         distance = torch.norm(torch.cat([self.rpos, self.rheading], dim=-1), dim=-1)
 
         reward_pose = 1.0 / (1.0 + torch.square(self.reward_distance_scale * distance))
+        # pose_reward = torch.exp(-distance * self.reward_distance_scale)
+        # uprightness
         reward_up = torch.square((self.drone.up[..., 2] + 1) / 2)
 
+        # spin reward
         spinnage = torch.square(self.drone.vel[..., -1])
         reward_spin = 1.0 / (1.0 + torch.square(spinnage))
 
+        # effort
         reward_effort = self.reward_effort_weight * torch.exp(-self.effort)
         reward_action_smoothness = self.reward_action_smoothness_weight * torch.exp(-self.drone.throttle_difference)
 

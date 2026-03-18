@@ -1,13 +1,13 @@
 # hydra.job.chdir: false
 
-headless: true
+headless: false
 
 sim: ${task.sim}
 env: ${task.env}
 
 total_frames: 600_000_000
 max_iters: -1
-eval_interval: 100000
+eval_interval: -1
 save_interval: 100000
 seed: 1
 
@@ -37,6 +37,6 @@ wandb:
   tags: 
 
 defaults:
-  - task: TransportHover
+  - task: Hover
   - algo: mappo
   - _self_

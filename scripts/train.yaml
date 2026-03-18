@@ -4,14 +4,14 @@ hydra:
   # see https://hydra.cc/docs/advanced/search_path/
    - file://../cfg
 
-headless: true
+headless: false
 
 sim: ${task.sim}
 env: ${task.env}
 
 total_frames: 150_000_000
 max_iters: -1
-eval_interval: 10000
+eval_interval: -1
 save_interval: 10000
 seed: 0
 
@@ -32,6 +32,6 @@ wandb:
   tags: 
 
 defaults:
-  - task: TransportHover
+  - task: Hover
   - algo: mappo
   - _self_
